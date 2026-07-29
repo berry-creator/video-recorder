@@ -36,6 +36,7 @@ func run() error {
 	flag.Parse()
 
 	log := logger.New(*debug)
+	log.Info("loading configuration", "path", *configPath)
 	store, err := config.Load(*configPath)
 	if err != nil {
 		return err

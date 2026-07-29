@@ -58,7 +58,7 @@ Go 1.22+ and FFmpeg 5+ are required. The FFmpeg build must include the `mjpeg` d
 go run -tags=headless ./cmd/recorder
 ```
 
-The service starts at `127.0.0.1:9000` by default. Open <http://127.0.0.1:9000/> to be redirected to the Console. If that default port is occupied, it tries `9001`, `9002`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Configuration is stored in `configs/config.json`, and videos are written to `recordings/` by default.
+The service starts at `127.0.0.1:9000` by default. Open <http://127.0.0.1:9000/> to be redirected to the Console. If that default port is occupied, it tries `9001`, `9002`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Development runs use `configs/config.json` when it exists. Packaged applications create the configuration in the operating system's user configuration directory, including `~/Library/Application Support/video-recorder/config.json` on macOS and `%AppData%\video-recorder\config.json` on Windows. Videos are written to the configured storage directory.
 
 On first load, the console selects English or Chinese from `navigator.languages`/`navigator.language`. The language selector in the header can persist a manual override; selecting Auto restores browser-language detection.
 

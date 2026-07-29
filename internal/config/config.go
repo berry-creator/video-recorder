@@ -96,6 +96,10 @@ func defaultStorageDirectory() string {
 }
 
 func (c Config) Validate() error {
+	return c.validate(true)
+}
+
+func (c Config) validate(requireCameraInput bool) error {
 	if strings.TrimSpace(c.Server.Address) == "" {
 		return errors.New("server address is required")
 	}
@@ -127,8 +131,11 @@ func (c Config) Validate() error {
 	if c.Capture.Source == "camera" {
 		hasPixelFormat := strings.TrimSpace(c.Capture.PixelFormat) != ""
 		hasVideoCodec := strings.TrimSpace(c.Capture.VideoCodec) != ""
-		if hasPixelFormat == hasVideoCodec {
+		if hasPixelFormat && hasVideoCodec {
 			return errors.New("camera requires exactly one pixel format or video codec")
+		}
+		if requireCameraInput && !hasPixelFormat && !hasVideoCodec {
+			return errors.New("camera pixel format or video codec is required")
 		}
 	}
 	if c.Capture.Width < 160 || c.Capture.Width > 7680 || c.Capture.Height < 120 || c.Capture.Height > 4320 {
@@ -182,10 +189,24 @@ func Load(path string) (*Store, error) {
 	if err := json.Unmarshal(data, &store.cfg); err != nil {
 		return nil, fmt.Errorf("decode config: %w", err)
 	}
-	if err := store.cfg.Validate(); err != nil {
+	normalized := normalizeLoadedConfig(&store.cfg)
+	if err := store.cfg.validate(false); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
+	if normalized {
+		if err := store.save(store.cfg); err != nil {
+			return nil, fmt.Errorf("save normalized config: %w", err)
+		}
+	}
 	return store, nil
+}
+
+func normalizeLoadedConfig(cfg *Config) bool {
+	if cfg.Capture.Source != "camera" || strings.TrimSpace(cfg.Capture.VideoCodec) == "" || strings.TrimSpace(cfg.Capture.PixelFormat) == "" {
+		return false
+	}
+	cfg.Capture.PixelFormat = ""
+	return true
 }
 
 func (s *Store) Get() Config {

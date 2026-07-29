@@ -58,7 +58,7 @@
 go run -tags=headless ./cmd/recorder
 ```
 
-默认从 `127.0.0.1:9000` 启动。访问 <http://127.0.0.1:9000/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `9001`、`9002` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。配置保存在 `configs/config.json`，视频默认写入 `recordings/`。
+默认从 `127.0.0.1:9000` 启动。访问 <http://127.0.0.1:9000/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `9001`、`9002` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。开发运行时若存在 `configs/config.json` 则使用该文件；打包后的应用会在系统用户配置目录中创建配置，例如 macOS 的 `~/Library/Application Support/video-recorder/config.json` 和 Windows 的 `%AppData%\video-recorder\config.json`。视频写入配置的存储目录。
 
 控制台首次打开时根据 `navigator.languages`/`navigator.language` 自动选择中文或英文。页眉中的语言选择器可以手动覆盖并记住选择；切回“自动”会恢复浏览器语言检测。
 

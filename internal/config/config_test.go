@@ -1,10 +1,69 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestLoadNormalizesAmbiguousCameraInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.Capture.Source = "camera"
+	cfg.Capture.Device = "0"
+	cfg.Capture.PixelFormat = "nv12"
+	cfg.Capture.VideoCodec = "mjpeg"
+	writeTestConfig(t, path, cfg)
+
+	store, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := store.Get().Capture
+	if loaded.PixelFormat != "" || loaded.VideoCodec != "mjpeg" {
+		t.Fatalf("normalized camera input = %#v", loaded)
+	}
+
+	var persisted Config
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Capture.PixelFormat != "" || persisted.Capture.VideoCodec != "mjpeg" {
+		t.Fatalf("normalized camera input was not persisted: %#v", persisted.Capture)
+	}
+}
+
+func TestLoadAllowsMissingCameraInputSoConsoleCanStart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.Capture.Source = "camera"
+	cfg.Capture.Device = "0"
+	writeTestConfig(t, path, cfg)
+
+	store, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Get().Capture.Source != "camera" {
+		t.Fatalf("loaded source = %q", store.Get().Capture.Source)
+	}
+}
+
+func writeTestConfig(t *testing.T, path string, cfg Config) {
+	t.Helper()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.json")

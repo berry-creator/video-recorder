@@ -278,18 +278,28 @@ func cameraInputArgs(platform string, cfg config.CaptureConfig, resolution, fps 
 		if cfg.VideoCodec != "" {
 			return nil, errors.New("video codec camera inputs are unsupported on linux")
 		}
-		return []string{"-f", "v4l2", "-input_format", cfg.PixelFormat, "-framerate", fps, "-video_size", resolution, "-i", cfg.Device}, nil
+		args := []string{"-f", "v4l2"}
+		if cfg.PixelFormat != "" {
+			args = append(args, "-input_format", cfg.PixelFormat)
+		}
+		return append(args, "-framerate", fps, "-video_size", resolution, "-i", cfg.Device), nil
 	case "darwin":
 		if cfg.VideoCodec != "" {
 			return nil, errors.New("video codec camera inputs are unsupported on macOS")
 		}
-		return []string{"-f", "avfoundation", "-pixel_format", cfg.PixelFormat, "-framerate", fps, "-video_size", resolution, "-i", avFoundationInput(cfg.Device)}, nil
-	case "windows":
-		inputOption, inputFormat := "-pixel_format", cfg.PixelFormat
-		if cfg.VideoCodec != "" {
-			inputOption, inputFormat = "-vcodec", cfg.VideoCodec
+		args := []string{"-f", "avfoundation"}
+		if cfg.PixelFormat != "" {
+			args = append(args, "-pixel_format", cfg.PixelFormat)
 		}
-		return []string{"-f", "dshow", inputOption, inputFormat, "-framerate", fps, "-video_size", resolution, "-i", "video=" + cfg.Device}, nil
+		return append(args, "-framerate", fps, "-video_size", resolution, "-i", avFoundationInput(cfg.Device)), nil
+	case "windows":
+		args := []string{"-f", "dshow"}
+		if cfg.VideoCodec != "" {
+			args = append(args, "-vcodec", cfg.VideoCodec)
+		} else if cfg.PixelFormat != "" {
+			args = append(args, "-pixel_format", cfg.PixelFormat)
+		}
+		return append(args, "-framerate", fps, "-video_size", resolution, "-i", "video="+cfg.Device), nil
 	default:
 		return nil, fmt.Errorf("camera capture is unsupported on %s", platform)
 	}

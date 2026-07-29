@@ -71,6 +71,19 @@ func TestWindowsCameraInputArgsUseSelectedVideoCodec(t *testing.T) {
 	}
 }
 
+func TestCameraInputArgsAllowDeviceDefaultFormat(t *testing.T) {
+	cfg := config.Default().Capture
+	cfg.Source = "camera"
+	cfg.Device = "0"
+	args, err := cameraInputArgs("darwin", cfg, "1280x720", "30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argumentAfter(args, "-pixel_format") != "" || argumentAfter(args, "-i") != "0:none" {
+		t.Fatalf("macOS default-format camera args = %#v", args)
+	}
+}
+
 func TestMockCaptureProducesWatermarkedJPEG(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
