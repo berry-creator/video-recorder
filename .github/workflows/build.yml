@@ -1,0 +1,208 @@
+name: Build applications
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Run static analysis
+        run: go vet ./...
+
+  windows:
+    name: Windows amd64
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageName = "video-recorder-windows-amd64"
+          $packageRoot = Join-Path $PWD "dist/$packageName"
+          New-Item -ItemType Directory -Force -Path "$packageRoot/configs" | Out-Null
+
+          go build -trimpath -ldflags="-s -w -H windowsgui" -o "$packageRoot/video-recorder.exe" ./cmd/recorder
+          if ($LASTEXITCODE -ne 0) { throw "Windows build failed" }
+
+          Copy-Item "configs/config.json" "$packageRoot/configs/config.json"
+          Copy-Item "README.md", "README_zh.md", "LICENSE" $packageRoot
+          Compress-Archive -Path $packageRoot -DestinationPath "dist/$packageName.zip" -CompressionLevel Optimal
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-recorder-windows-amd64
+          path: dist/video-recorder-windows-amd64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: Linux amd64
+    needs: test
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Build and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="video-recorder-linux-amd64"
+          package_root="$PWD/dist/$package_name"
+          mkdir -p "$package_root/configs"
+
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags=desktop -trimpath -ldflags="-s -w" -o "$package_root/video-recorder" ./cmd/recorder
+          chmod 755 "$package_root/video-recorder"
+          cp configs/config.json "$package_root/configs/config.json"
+          cp README.md README_zh.md LICENSE "$package_root/"
+          tar -C "$PWD/dist" -czf "$PWD/dist/$package_name.tar.gz" "$package_name"
+
+      - name: Verify Linux application
+        run: |
+          test -x dist/video-recorder-linux-amd64/video-recorder
+          ldd dist/video-recorder-linux-amd64/video-recorder
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-recorder-linux-amd64
+          path: dist/video-recorder-linux-amd64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: macOS universal
+    needs: test
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build universal application
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="video-recorder-macos-universal"
+          package_root="$PWD/dist/$package_name"
+          app_root="$package_root/Video Recorder.app"
+          executable_dir="$app_root/Contents/MacOS"
+          resources_dir="$app_root/Contents/Resources"
+          mkdir -p "$executable_dir" "$resources_dir"
+
+          CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/video-recorder-amd64" ./cmd/recorder
+          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/video-recorder-arm64" ./cmd/recorder
+          lipo -create -output "$executable_dir/video-recorder" "$RUNNER_TEMP/video-recorder-amd64" "$RUNNER_TEMP/video-recorder-arm64"
+          chmod 755 "$executable_dir/video-recorder"
+
+          version="0.0.0"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then version="${GITHUB_REF_NAME#v}"; fi
+          plist="$app_root/Contents/Info.plist"
+          plutil -create xml1 "$plist"
+          plutil -insert CFBundleDisplayName -string "Video Recorder" "$plist"
+          plutil -insert CFBundleExecutable -string "video-recorder" "$plist"
+          plutil -insert CFBundleIdentifier -string "io.github.video-recorder" "$plist"
+          plutil -insert CFBundleName -string "Video Recorder" "$plist"
+          plutil -insert CFBundlePackageType -string "APPL" "$plist"
+          plutil -insert CFBundleShortVersionString -string "$version" "$plist"
+          plutil -insert CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$plist"
+          plutil -insert LSMinimumSystemVersion -string "11.0" "$plist"
+          plutil -insert LSUIElement -bool true "$plist"
+          plutil -insert NSHighResolutionCapable -bool true "$plist"
+          plutil -insert NSCameraUsageDescription -string "Video Recorder needs camera access to capture video from the selected device." "$plist"
+
+          cp README.md README_zh.md LICENSE "$package_root/"
+          codesign --force --deep --sign - "$app_root"
+          ditto -c -k --sequesterRsrc --keepParent "$package_root" "dist/$package_name.zip"
+
+      - name: Verify universal binary
+        run: |
+          lipo -info "dist/video-recorder-macos-universal/Video Recorder.app/Contents/MacOS/video-recorder"
+          codesign --verify --deep --strict "dist/video-recorder-macos-universal/Video Recorder.app"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-recorder-macos-universal
+          path: dist/video-recorder-macos-universal.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - windows
+      - linux
+      - macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: video-recorder-*
+          path: release
+          merge-multiple: true
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" release/* --clobber

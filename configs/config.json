@@ -1,0 +1,23 @@
+{
+  "server": {
+    "address": "127.0.0.1:9000",
+    "allowedOrigins": []
+  },
+  "capture": {
+    "source": "mock",
+    "device": "",
+    "width": 1280,
+    "height": 720,
+    "fps": 26,
+    "jpegQuality": 5,
+    "bufferSeconds": 30,
+    "ffmpegPath": "ffmpeg"
+  },
+  "storage": {
+    "directory": "recordings",
+    "organization": "day"
+  },
+  "export": {
+    "queueSize": 8
+  }
+}

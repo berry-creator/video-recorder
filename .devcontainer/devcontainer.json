@@ -1,0 +1,14 @@
+{
+  "name": "video-recorder",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "forwardPorts": [9000],
+  "runArgs": ["--init"],
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go", "mhutchie.git-graph"]
+    }
+  }
+}
