@@ -101,10 +101,18 @@ func TestCameraSourceRequiresSpecificDevice(t *testing.T) {
 
 	cfg.Capture.Device = "0"
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() accepted a camera source without a pixel format")
+		t.Fatal("Validate() accepted a camera source without an input format")
 	}
 	cfg.Capture.PixelFormat = "nv12"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() rejected a camera source with a device ID: %v", err)
+	}
+	cfg.Capture.VideoCodec = "mjpeg"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted both a pixel format and video codec")
+	}
+	cfg.Capture.PixelFormat = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() rejected a video codec camera input: %v", err)
 	}
 }

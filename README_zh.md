@@ -70,7 +70,7 @@ go run -tags=headless ./cmd/recorder -config /path/to/config.json
 
 ### 摄像头设备
 
-控制台会自动检测可用的内置、USB 外接和虚拟摄像头。选择设备后会尽力探测其像素格式、分辨率和帧率，并在存在可用结果时应用明确的推荐模式；具体结果取决于设备、驱动、平台和 FFmpeg 构建。所有建议字段仍可编辑，探测结果不完整或硬件模式特殊时可以手工设置。连接或断开摄像头后，可使用列表旁的刷新按钮重新检测。
+控制台会自动检测可用的内置、USB 外接和虚拟摄像头。选择设备后会尽力探测其像素格式、视频编码、分辨率和帧率，并在存在可用结果时应用完整的推荐硬件模式。硬件模式下拉框会将输入格式、分辨率和帧率作为一个受支持的组合；底层字段仍可编辑，探测不完整或硬件特殊时可以手工设置。连接或断开摄像头后，可使用列表旁的刷新按钮重新检测。
 
 | 平台 | 保存的设备 ID 示例 | FFmpeg 输入 |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ go run -tags=headless ./cmd/recorder -config /path/to/config.json
 | macOS | `0` | `avfoundation` |
 | Windows | `@device_pnp_...` | `dshow` |
 
-Linux 通过 `/dev/video*` 检测设备；macOS 和 Windows 使用 FFmpeg 的原生设备列表。能力探测始终针对当前选择的设备，因此 macOS 内置摄像头和 USB 外接摄像头可以返回不同参数。Windows 在 FFmpeg 提供 DirectShow alternative name 时保存该稳定标识，控制台仍显示易读的摄像头名称。
+Linux 通过 `/dev/video*` 检测设备；macOS 和 Windows 使用 FFmpeg 的原生设备列表。能力探测始终针对当前选择的设备，因此 macOS 内置摄像头和 USB 外接摄像头可以返回不同参数。Windows 在 FFmpeg 提供 DirectShow alternative name 时保存该稳定标识，控制台仍显示易读的摄像头名称。DirectShow 原始画面模式使用 `pixelFormat`，MJPEG 等压缩模式使用 `videoCodec`，避免高带宽模式被错误地强制为不受支持的原始像素格式。
 
 保存配置时会持久化所选设备 ID。仅当视频源、设备、像素格式、分辨率、帧率、JPEG 质量或 FFmpeg 路径等采集参数变化时，FFmpeg 才会重新连接；修改存储和 Web 配置不会重新连接摄像头。如果所选设备暂时不可用，服务每 2 秒重试并在状态接口显示最近错误。
 
@@ -142,7 +142,7 @@ ws://127.0.0.1:<实际端口>/ws/live
 | `PUT` | `/api/v1/config` | 校验并持久化；仅采集参数变化时重新连接 |
 | `POST` | `/api/v1/config/reset` | 恢复并持久化默认采集参数 |
 | `GET` | `/api/v1/cameras` | 检测可用摄像头设备 |
-| `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...` | 尽力检测设备的像素格式、分辨率和帧率 |
+| `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...&videoCodec=...` | 尽力检测设备支持的完整输入模式 |
 | `POST` | `/api/v1/storage/directory/select` | 打开系统存储目录选择框 |
 | `GET` | `/api/v1/status` | 设备、录像、缓冲和预览连接状态 |
 | `POST` | `/api/v1/capture/reset` | 丢弃尚未保存的录像并开始新的录像 |
@@ -180,6 +180,7 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
     "source": "mock",
     "device": "",
     "pixelFormat": "",
+    "videoCodec": "",
     "width": 1280,
     "height": 720,
     "fps": 30,
@@ -201,6 +202,8 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 ```
 
 `jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。`bufferSeconds` 控制已录制 JPEG 帧在应用内存中累计多久后，批量追加一次到临时录像文件；它不限制最终保存视频的时长。默认 30 秒因此是应用层写入间隔，不保证磁盘每 30 秒物理刷盘：程序不会调用 `fsync`，实际落盘由操作系统控制。保存时会先写出剩余内存批次，再原子移交录像；开始新的录像和自动超时都会清除当前内存批次及对应临时文件。`recording.maxDurationMinutes` 控制该超时时间，默认为 60 分钟。
+
+摄像头输入必须且只能设置 `capture.pixelFormat` 或 `capture.videoCodec` 中的一项。DirectShow 原始模式使用 `pixelFormat`，MJPEG 等压缩模式使用 `videoCodec`。
 
 只有活动录像中的 JPEG 帧会保存在应用专属的系统临时目录中，直到保存、被新录像替换或超时。分辨率、帧率、画面复杂度、内存缓冲时长和已录制时间会影响内存及临时磁盘占用；正常退出时会删除当前临时目录。
 

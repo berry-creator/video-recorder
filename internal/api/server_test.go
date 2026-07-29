@@ -44,7 +44,7 @@ func (f fakeCameraLister) List(context.Context, string) ([]service.CameraDevice,
 	return f.devices, f.err
 }
 
-func (f fakeCameraLister) Capabilities(context.Context, string, string, string) (service.CameraCapabilities, error) {
+func (f fakeCameraLister) Capabilities(context.Context, string, string, string, string) (service.CameraCapabilities, error) {
 	return f.capabilities, f.err
 }
 
@@ -121,9 +121,19 @@ func TestConsolePageAndStatus(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(pageText, "录像控制台") {
 		t.Fatalf("console page status = %d, body = %q", response.StatusCode, page)
 	}
-	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="pixelFormat"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
+	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormat"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
 		if !strings.Contains(pageText, expected) {
 			t.Errorf("console page does not contain bilingual UI marker %q", expected)
+		}
+	}
+	for _, order := range [][2]string{
+		{`class="brand-name">Video Recorder`, `data-i18n="consoleTitle">录像控制台`},
+		{`id="refreshButton"`, `id="languageSelect"`},
+		{`id="exportButton"`, `id="resetCaptureButton"`},
+	} {
+		first, second := strings.Index(pageText, order[0]), strings.Index(pageText, order[1])
+		if first < 0 || second < 0 || first >= second {
+			t.Errorf("console elements are not ordered as %q before %q", order[0], order[1])
 		}
 	}
 	response, err = http.Get(ts.server.URL + "/config")
@@ -162,6 +172,7 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	next.Capture.Source = "camera"
 	next.Capture.Device = "/dev/video-test"
 	next.Capture.PixelFormat = "nv12"
+	next.Capture.VideoCodec = ""
 	next.Capture.FFmpegPath = "/custom/ffmpeg"
 	next.Server.Address = "127.0.0.1:9123"
 	next.Server.AllowedOrigins = []string{"https://app.example.com"}
@@ -193,7 +204,7 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	if body.Data.Storage.Organization != config.StorageOrganizationMonth {
 		t.Fatalf("reset changed storage organization to %q, want month", body.Data.Storage.Organization)
 	}
-	if body.Data.Capture.Source != next.Capture.Source || body.Data.Capture.Device != next.Capture.Device || body.Data.Capture.PixelFormat != next.Capture.PixelFormat || body.Data.Capture.FFmpegPath != next.Capture.FFmpegPath || body.Data.Server.Address != next.Server.Address || len(body.Data.Server.AllowedOrigins) != 1 || body.Data.Storage.Directory != next.Storage.Directory || body.Data.Export.QueueSize != next.Export.QueueSize {
+	if body.Data.Capture.Source != next.Capture.Source || body.Data.Capture.Device != next.Capture.Device || body.Data.Capture.PixelFormat != next.Capture.PixelFormat || body.Data.Capture.VideoCodec != next.Capture.VideoCodec || body.Data.Capture.FFmpegPath != next.Capture.FFmpegPath || body.Data.Server.Address != next.Server.Address || len(body.Data.Server.AllowedOrigins) != 1 || body.Data.Storage.Directory != next.Storage.Directory || body.Data.Export.QueueSize != next.Export.QueueSize {
 		t.Fatalf("reset changed a non-resettable setting: got %#v, before %#v", body.Data, next)
 	}
 	if frames != 1 {
@@ -361,8 +372,9 @@ func TestCameraCapabilities(t *testing.T) {
 	ts.api.cameras = fakeCameraLister{capabilities: service.CameraCapabilities{
 		Device:            "0",
 		PixelFormats:      []string{"nv12", "uyvy422"},
-		Modes:             []service.CameraMode{{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30}},
-		Recommended:       service.CameraMode{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30},
+		VideoCodecs:       []string{"mjpeg"},
+		Modes:             []service.CameraMode{{VideoCodec: "mjpeg", Width: 1280, Height: 720, FPS: 30}},
+		Recommended:       service.CameraMode{VideoCodec: "mjpeg", Width: 1280, Height: 720, FPS: 30},
 		DrawtextAvailable: false,
 	}}
 
@@ -377,7 +389,7 @@ func TestCameraCapabilities(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || body.Data.Recommended.PixelFormat != "nv12" || body.Data.Recommended.FPS != 30 {
+	if response.StatusCode != http.StatusOK || body.Data.Recommended.VideoCodec != "mjpeg" || body.Data.Recommended.FPS != 30 {
 		t.Fatalf("capabilities status = %d, body = %#v", response.StatusCode, body)
 	}
 }

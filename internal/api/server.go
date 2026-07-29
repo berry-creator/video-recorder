@@ -33,7 +33,7 @@ type Server struct {
 
 type cameraLister interface {
 	List(context.Context, string) ([]service.CameraDevice, error)
-	Capabilities(context.Context, string, string, string) (service.CameraCapabilities, error)
+	Capabilities(context.Context, string, string, string, string) (service.CameraCapabilities, error)
 }
 
 type directorySelector interface {
@@ -118,6 +118,7 @@ func (s *Server) getCameraCapabilities(w http.ResponseWriter, r *http.Request) {
 		s.config.Get().Capture.FFmpegPath,
 		device,
 		strings.TrimSpace(r.URL.Query().Get("pixelFormat")),
+		strings.TrimSpace(r.URL.Query().Get("videoCodec")),
 	)
 	if err != nil {
 		s.log.Warn("camera capability detection failed", "device", device, "error", err)

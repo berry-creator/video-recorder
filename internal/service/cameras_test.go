@@ -92,20 +92,27 @@ func TestParseAVFoundationCapabilities(t *testing.T) {
 	if !reflect.DeepEqual(modes, wantModes) {
 		t.Fatalf("modes = %#v, want %#v", modes, wantModes)
 	}
-	if recommended := recommendCameraMode("nv12", formats, modes); recommended != wantModes[1] {
+	if recommended := recommendCameraMode("nv12", "", formats, nil, modes); recommended != wantModes[1] {
 		t.Fatalf("recommended mode = %#v, want %#v", recommended, wantModes[1])
 	}
 }
 
 func TestParseDirectShowCapabilities(t *testing.T) {
 	output := `[dshow @ 0001]   pixel_format=yuyv422 min s=640x480 fps=5 max s=1280x720 fps=30
-[dshow @ 0001]   pixel_format=nv12 min s=1280x720 fps=5 max s=1920x1080 fps=30`
-	formats, modes := parseDirectShowCapabilities(output)
+[dshow @ 0001]   pixel_format=nv12 min s=1280x720 fps=5 max s=1920x1080 fps=30
+[dshow @ 0001]   vcodec=mjpeg min s=1280x720 fps=5 max s=1280x720 fps=30`
+	formats, codecs, modes := parseDirectShowCapabilities(output)
 	if !reflect.DeepEqual(formats, []string{"yuyv422", "nv12"}) {
 		t.Fatalf("pixel formats = %#v", formats)
 	}
-	if len(modes) != 4 || modes[1] != (CameraMode{PixelFormat: "yuyv422", Width: 1280, Height: 720, FPS: 30}) {
+	if !reflect.DeepEqual(codecs, []string{"mjpeg"}) {
+		t.Fatalf("video codecs = %#v", codecs)
+	}
+	if len(modes) != 10 || modes[3] != (CameraMode{PixelFormat: "yuyv422", Width: 1280, Height: 720, FPS: 30}) {
 		t.Fatalf("modes = %#v", modes)
+	}
+	if recommended := recommendCameraMode("", "", formats, codecs, modes); recommended != (CameraMode{VideoCodec: "mjpeg", Width: 1280, Height: 720, FPS: 30}) {
+		t.Fatalf("recommended mode = %#v", recommended)
 	}
 }
 
@@ -142,7 +149,7 @@ func TestAVFoundationCapabilitiesProbeSelectedDevice(t *testing.T) {
 		},
 	}
 
-	capabilities, err := detector.Capabilities(context.Background(), "ffmpeg", "7", "nv12")
+	capabilities, err := detector.Capabilities(context.Background(), "ffmpeg", "7", "nv12", "")
 	if err != nil {
 		t.Fatal(err)
 	}

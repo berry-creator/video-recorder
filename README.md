@@ -70,7 +70,7 @@ go run -tags=headless ./cmd/recorder -config /path/to/config.json
 
 ### Camera Devices
 
-The console automatically detects available built-in, USB, and virtual cameras. Selecting a device probes its pixel formats, resolutions, and frame rates on a best-effort basis and applies a recommended concrete mode when one is available. The exact results depend on the device, driver, platform, and FFmpeg build. Every suggested field remains editable, so incomplete probes and unusual hardware can be configured manually. Use the refresh button beside the list after connecting or disconnecting a camera.
+The console automatically detects available built-in, USB, and virtual cameras. Selecting a device probes its pixel formats, video codecs, resolutions, and frame rates on a best-effort basis and applies a recommended complete hardware mode when one is available. The mode selector keeps the input format, resolution, and frame rate as one supported tuple. Every underlying field remains editable for incomplete probes and unusual hardware. Use the refresh button beside the list after connecting or disconnecting a camera.
 
 | Platform | Saved device ID example | FFmpeg input |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ The console automatically detects available built-in, USB, and virtual cameras. 
 | macOS | `0` | `avfoundation` |
 | Windows | `@device_pnp_...` | `dshow` |
 
-Linux detection enumerates `/dev/video*`; macOS and Windows detection use FFmpeg's native device listing. Capability probing always targets the selected device, so macOS built-in and USB cameras may expose different modes. On Windows, the stable DirectShow alternative name is saved when FFmpeg provides one, while the readable camera name remains visible in the console.
+Linux detection enumerates `/dev/video*`; macOS and Windows detection use FFmpeg's native device listing. Capability probing always targets the selected device, so macOS built-in and USB cameras may expose different modes. On Windows, the stable DirectShow alternative name is saved when FFmpeg provides one, while the readable camera name remains visible in the console. DirectShow raw modes use `pixelFormat`; compressed modes such as MJPEG use `videoCodec`, which avoids forcing high-bandwidth modes through an unsupported raw pixel format.
 
 Saving settings persists the selected device ID. FFmpeg reconnects only when capture parameters such as the source, device, pixel format, resolution, frame rate, JPEG quality, or FFmpeg path change. Storage and web settings do not reconnect the camera. If the selected device is unavailable, the service retries every two seconds and exposes the latest error through the status endpoint.
 
@@ -142,7 +142,7 @@ Each WebSocket binary message contains one complete JPEG image suitable for `cre
 | `PUT` | `/api/v1/config` | Validate and persist; reconnect capture only when capture parameters change |
 | `POST` | `/api/v1/config/reset` | Restore and persist the default capture parameters |
 | `GET` | `/api/v1/cameras` | Detect available camera devices |
-| `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...` | Best-effort detection of pixel formats, resolutions, and frame rates for a device |
+| `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...&videoCodec=...` | Best-effort detection of complete input modes for a device |
 | `POST` | `/api/v1/storage/directory/select` | Open the system storage-directory picker |
 | `GET` | `/api/v1/status` | Device, recording, buffer, and preview-client status |
 | `POST` | `/api/v1/capture/reset` | Discard any unsaved recording and start a new recording |
@@ -180,6 +180,7 @@ An explicit `"*"` permits any website to read the local camera preview and invok
     "source": "mock",
     "device": "",
     "pixelFormat": "",
+    "videoCodec": "",
     "width": 1280,
     "height": 720,
     "fps": 30,
@@ -201,6 +202,8 @@ An explicit `"*"` permits any website to read the local camera preview and invok
 ```
 
 `jpegQuality` uses FFmpeg's quantizer scale: `2` is the highest quality and `31` the lowest. `bufferSeconds` controls how long recorded JPEG frames are batched in application memory before one append to the temporary recording file; it does not limit the saved video duration. The default 30 seconds is therefore an application write interval, not a guaranteed physical-disk flush interval: the recorder does not call `fsync`, and the operating system controls physical writeback. Saving flushes the remaining memory batch before atomically detaching the recording. Starting a new recording and automatic timeout both discard the current memory batch and its temporary file. `recording.maxDurationMinutes` controls that timeout and defaults to 60 minutes.
+
+Camera inputs must set exactly one of `capture.pixelFormat` or `capture.videoCodec`. Raw DirectShow modes use `pixelFormat`; compressed DirectShow modes such as MJPEG use `videoCodec`.
 
 Only frames from an active recording are retained in the application-owned system temporary directory until they are saved, replaced, or timed out. Resolution, frame rate, scene complexity, buffer duration, and elapsed recording time affect memory and temporary disk usage. The active temporary directory is removed during graceful shutdown.
 

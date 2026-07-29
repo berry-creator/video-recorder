@@ -31,6 +31,7 @@ type CaptureConfig struct {
 	Source        string `json:"source"`
 	Device        string `json:"device"`
 	PixelFormat   string `json:"pixelFormat"`
+	VideoCodec    string `json:"videoCodec"`
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	FPS           int    `json:"fps"`
@@ -65,6 +66,7 @@ func Default() Config {
 			Source:        "mock",
 			Device:        "",
 			PixelFormat:   "",
+			VideoCodec:    "",
 			Width:         1280,
 			Height:        720,
 			FPS:           30,
@@ -122,8 +124,12 @@ func (c Config) Validate() error {
 	if c.Capture.Source == "camera" && strings.TrimSpace(c.Capture.Device) == "" {
 		return errors.New("camera device is required")
 	}
-	if c.Capture.Source == "camera" && strings.TrimSpace(c.Capture.PixelFormat) == "" {
-		return errors.New("camera pixel format is required")
+	if c.Capture.Source == "camera" {
+		hasPixelFormat := strings.TrimSpace(c.Capture.PixelFormat) != ""
+		hasVideoCodec := strings.TrimSpace(c.Capture.VideoCodec) != ""
+		if hasPixelFormat == hasVideoCodec {
+			return errors.New("camera requires exactly one pixel format or video codec")
+		}
 	}
 	if c.Capture.Width < 160 || c.Capture.Width > 7680 || c.Capture.Height < 120 || c.Capture.Height > 4320 {
 		return errors.New("capture resolution is outside the supported range")

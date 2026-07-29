@@ -57,6 +57,20 @@ func TestCameraInputArgsUseSelectedPixelFormat(t *testing.T) {
 	}
 }
 
+func TestWindowsCameraInputArgsUseSelectedVideoCodec(t *testing.T) {
+	cfg := config.Default().Capture
+	cfg.Source = "camera"
+	cfg.Device = `@device_pnp_\\?\usb#vid_046d&pid_0825`
+	cfg.VideoCodec = "mjpeg"
+	args, err := cameraInputArgs("windows", cfg, "1280x720", "30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argumentAfter(args, "-vcodec") != "mjpeg" || argumentAfter(args, "-pixel_format") != "" || argumentAfter(args, "-i") != "video="+cfg.Device {
+		t.Fatalf("Windows camera args = %#v", args)
+	}
+}
+
 func TestMockCaptureProducesWatermarkedJPEG(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
