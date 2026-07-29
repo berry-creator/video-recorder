@@ -61,7 +61,7 @@ type ExportConfig struct {
 
 func Default() Config {
 	return Config{
-		Server: ServerConfig{Address: "127.0.0.1:9000", AllowedOrigins: []string{}},
+		Server: ServerConfig{Address: "127.0.0.1:8800", AllowedOrigins: []string{}},
 		Capture: CaptureConfig{
 			Source:        "mock",
 			Device:        "",
@@ -72,12 +72,19 @@ func Default() Config {
 			FPS:           30,
 			JPEGQuality:   5,
 			BufferSeconds: 30,
-			FFmpegPath:    "ffmpeg",
+			FFmpegPath:    defaultFFmpegPath(runtime.GOOS),
 		},
 		Recording: RecordingConfig{MaxDurationMinutes: 60},
 		Storage:   StorageConfig{Directory: defaultStorageDirectory(), Organization: StorageOrganizationDay},
 		Export:    ExportConfig{QueueSize: 8},
 	}
+}
+
+func defaultFFmpegPath(platform string) string {
+	if platform == "darwin" {
+		return "/opt/homebrew/bin/ffmpeg"
+	}
+	return "ffmpeg"
 }
 
 func defaultStorageDirectory() string {

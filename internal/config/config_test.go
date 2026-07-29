@@ -140,6 +140,17 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	}
 }
 
+func TestDefaultFFmpegPathByPlatform(t *testing.T) {
+	if got := defaultFFmpegPath("darwin"); got != "/opt/homebrew/bin/ffmpeg" {
+		t.Fatalf("macOS default FFmpeg path = %q", got)
+	}
+	for _, platform := range []string{"linux", "windows"} {
+		if got := defaultFFmpegPath(platform); got != "ffmpeg" {
+			t.Fatalf("%s default FFmpeg path = %q", platform, got)
+		}
+	}
+}
+
 func TestInvalidRecordingDurationIsRejected(t *testing.T) {
 	for _, duration := range []int{0, 10081} {
 		cfg := Default()

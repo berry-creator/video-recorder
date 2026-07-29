@@ -121,7 +121,7 @@ func TestConsolePageAndStatus(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(pageText, "录像控制台") {
 		t.Fatalf("console page status = %d, body = %q", response.StatusCode, page)
 	}
-	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormat"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
+	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormatSelect"`, `id="pixelFormat"`, `id="videoCodecField"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
 		if !strings.Contains(pageText, expected) {
 			t.Errorf("console page does not contain bilingual UI marker %q", expected)
 		}
@@ -370,6 +370,7 @@ func TestCameraCapabilities(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 	ts.api.cameras = fakeCameraLister{capabilities: service.CameraCapabilities{
+		Platform:          "windows",
 		Device:            "0",
 		PixelFormats:      []string{"nv12", "uyvy422"},
 		VideoCodecs:       []string{"mjpeg"},
@@ -389,7 +390,7 @@ func TestCameraCapabilities(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || body.Data.Recommended.VideoCodec != "mjpeg" || body.Data.Recommended.FPS != 30 {
+	if response.StatusCode != http.StatusOK || body.Data.Platform != "windows" || body.Data.Recommended.VideoCodec != "mjpeg" || body.Data.Recommended.FPS != 30 {
 		t.Fatalf("capabilities status = %d, body = %#v", response.StatusCode, body)
 	}
 }

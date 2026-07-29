@@ -1,6 +1,6 @@
 {
   "server": {
-    "address": "127.0.0.1:9000",
+    "address": "127.0.0.1:8800",
     "allowedOrigins": []
   },
   "capture": {

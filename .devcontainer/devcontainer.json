@@ -4,7 +4,7 @@
     "dockerfile": "Dockerfile",
     "context": ".."
   },
-  "forwardPorts": [9000],
+  "forwardPorts": [8800],
   "runArgs": ["--init"],
   "customizations": {
     "vscode": {

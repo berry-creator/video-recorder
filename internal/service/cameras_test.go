@@ -97,6 +97,18 @@ func TestParseAVFoundationCapabilities(t *testing.T) {
 	}
 }
 
+func TestAVFoundationProbeFormatsPreferDetectedAndFallBackToCommonFormats(t *testing.T) {
+	if got := avFoundationProbeFormats("uyvy422", []string{"nv12"}); !reflect.DeepEqual(got, []string{"uyvy422"}) {
+		t.Fatalf("explicit probe formats = %#v", got)
+	}
+	if got := avFoundationProbeFormats("", []string{"uyvy422", "nv12"}); !reflect.DeepEqual(got, []string{"nv12", "uyvy422"}) {
+		t.Fatalf("detected probe formats = %#v", got)
+	}
+	if got := avFoundationProbeFormats("", nil); len(got) == 0 || got[0] != "nv12" {
+		t.Fatalf("fallback probe formats = %#v", got)
+	}
+}
+
 func TestParseAVFoundationDefaultStreamMode(t *testing.T) {
 	output := `[avfoundation @ 0x1] Stream #0:0: Video: rawvideo (UYVY / 0x59565955), uyvy422, 1920x1080, 995328 kb/s, 29.97 fps, 29.97 tbr, 1000k tbn`
 	want := CameraMode{PixelFormat: "uyvy422", Width: 1920, Height: 1080, FPS: 30}
@@ -196,5 +208,32 @@ func TestAVFoundationCapabilitiesFallBackToDefaultStreamMode(t *testing.T) {
 	want := CameraMode{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30}
 	if len(capabilities.Modes) != 1 || capabilities.Modes[0] != want || capabilities.Recommended != want {
 		t.Fatalf("capabilities = %#v, want default mode %#v", capabilities, want)
+	}
+}
+
+func TestAVFoundationCapabilitiesTryNV12WhenFormatListingIsUnavailable(t *testing.T) {
+	detector := &CameraDetector{
+		platform: "darwin",
+		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			switch {
+			case containsString(args, "-filters"):
+				return []byte(" T.S. drawtext V->V Draw text"), nil
+			case containsString(args, "monob"):
+				return []byte("pixel format probe failed"), errors.New("unsupported pixel format")
+			case containsString(args, "nv12"):
+				return []byte("[avfoundation @ 0x1] Supported modes:\n[avfoundation @ 0x1] 1280x720@[1.000000 30.000000]fps"), errors.New("unsupported mode")
+			default:
+				return nil, errors.New("unexpected probe")
+			}
+		},
+	}
+
+	capabilities, err := detector.Capabilities(context.Background(), "ffmpeg", "0", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := CameraMode{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30}
+	if capabilities.Platform != "darwin" || len(capabilities.Modes) != 1 || capabilities.Modes[0] != want || capabilities.Recommended != want {
+		t.Fatalf("capabilities = %#v, want NV12 fallback mode %#v", capabilities, want)
 	}
 }

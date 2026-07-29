@@ -58,7 +58,7 @@ Go 1.22+ and FFmpeg 5+ are required. The FFmpeg build must include the `mjpeg` d
 go run -tags=headless ./cmd/recorder
 ```
 
-The service starts at `127.0.0.1:9000` by default. Open <http://127.0.0.1:9000/> to be redirected to the Console. If that default port is occupied, it tries `9001`, `9002`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Development runs use `configs/config.json` when it exists. Packaged applications create the configuration in the operating system's user configuration directory, including `~/Library/Application Support/video-recorder/config.json` on macOS and `%AppData%\video-recorder\config.json` on Windows. Videos are written to the configured storage directory.
+The service starts at `127.0.0.1:8800` by default. Open <http://127.0.0.1:8800/> to be redirected to the Console. If that default port is occupied, it tries `8801`, `8802`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Development runs use `configs/config.json` when it exists. Packaged applications create the configuration in the operating system's user configuration directory, including `~/Library/Application Support/video-recorder/config.json` on macOS and `%AppData%\video-recorder\config.json` on Windows. A newly generated macOS configuration defaults `capture.ffmpegPath` to `/opt/homebrew/bin/ffmpeg`; other platforms default to resolving `ffmpeg` from `PATH`. Videos are written to the configured storage directory.
 
 On first load, the console selects English or Chinese from `navigator.languages`/`navigator.language`. The language selector in the header can persist a manual override; selecting Auto restores browser-language detection.
 
@@ -147,7 +147,7 @@ Each WebSocket binary message contains one complete JPEG image suitable for `cre
 | `GET` | `/api/v1/status` | Device, recording, buffer, and preview-client status |
 | `POST` | `/api/v1/capture/reset` | Discard any unsaved recording and start a new recording |
 
-The Console exposes the service port as a numeric setting. Port changes take effect after restarting the application; capture and storage settings take effect immediately. Automatic port fallback applies only to the default port `9000`, while an explicitly configured non-default port remains strict.
+The Console exposes the service port as a numeric setting. Port changes take effect after restarting the application; capture and storage settings take effect immediately. Automatic port fallback applies only to the default port `8800`, while an explicitly configured non-default port remains strict.
 
 The Console reports `Device unavailable`, `Reconnecting`, `Live preview`, `Recording`, or `Recording stopped: time limit`. Recorded duration and frame count apply only to the active recording. `New recording` discards the current in-memory batch and temporary file before starting again. `Save` stops recording after the segment is queued, while FFmpeg and live preview remain active. When the configured duration limit is reached, recording stops and all unsaved memory and temporary-file data is deleted. The default limit is 60 minutes. When FFmpeg provides `drawtext`, each preview and exported frame contains only the current time in the upper-right corner.
 
@@ -160,7 +160,7 @@ The console permits same-origin browser access by default. Add the complete Orig
 ```json
 {
   "server": {
-    "address": "127.0.0.1:9000",
+    "address": "127.0.0.1:8800",
     "allowedOrigins": ["https://app.example.com"]
   }
 }
@@ -173,7 +173,7 @@ An explicit `"*"` permits any website to read the local camera preview and invok
 ```json
 {
   "server": {
-    "address": "127.0.0.1:9000",
+    "address": "127.0.0.1:8800",
     "allowedOrigins": []
   },
   "capture": {

@@ -47,6 +47,7 @@
     canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
     .empty { position: absolute; inset: 0; display: grid; place-items: center; color: #7f8790; font-size: 13px; pointer-events: none; }
     .empty[hidden] { display: none; }
+    label[hidden], input[hidden] { display: none; }
     .metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid #303439; }
     .metric { min-width: 0; padding: 12px 14px; border-right: 1px solid #303439; }
     .metric:last-child { border-right: 0; }
@@ -144,8 +145,8 @@
               </div>
             </div>
             <label class="wide"><span data-i18n="cameraMode">硬件模式</span><select id="cameraMode"><option value="" data-i18n="manualMode">手工设置</option></select><span id="cameraCapabilityMeta" class="field-help"></span></label>
-            <label><span data-i18n="pixelFormat">输入像素格式</span><input id="pixelFormat" type="text" list="pixelFormatOptions" autocomplete="off"><datalist id="pixelFormatOptions"></datalist></label>
-            <label><span data-i18n="videoCodec">输入视频编码</span><input id="videoCodec" type="text" list="videoCodecOptions" autocomplete="off"><datalist id="videoCodecOptions"></datalist></label>
+            <label id="pixelFormatField"><span data-i18n="pixelFormat">输入像素格式</span><select id="pixelFormatSelect"><option value="" data-i18n="automaticFormat">自动检测</option><option value="__manual__" data-i18n="manualMode">手工设置</option></select><input id="pixelFormat" type="text" autocomplete="off" data-i18n-placeholder="manualPixelFormat" hidden></label>
+            <label id="videoCodecField"><span data-i18n="videoCodec">输入视频编码</span><input id="videoCodec" type="text" list="videoCodecOptions" autocomplete="off"><datalist id="videoCodecOptions"></datalist></label>
             <label><span data-i18n="serverPort">服务端口</span><input id="serverPort" type="number" min="1" max="65535" required></label>
             <label><span data-i18n="storageOrganization">文件分类</span><select id="storageOrganization"><option value="day" data-i18n="organizationDay">按天</option><option value="month" data-i18n="organizationMonth">按月</option><option value="none" data-i18n="organizationNone">无</option></select></label>
             <label><span data-i18n="width">宽度</span><input id="width" type="number" min="160" max="7680" list="widthOptions" required><datalist id="widthOptions"></datalist></label>
@@ -180,7 +181,7 @@
         refreshStatus: '刷新状态', livePreview: '实时预览', waitingStream: '等待视频流', noFrame: '暂无画面',
         captureStatus: '状态', capturedDuration: '已录制时间', resetCapture: '新的录制', bufferedFrames: '已录制帧数', memoryUsage: '内存缓冲', previewConnections: '预览连接',
         captureConfig: '配置', configRestartHint: '硬件参数变化时重新连接摄像头', videoSource: '视频源', mockSource: '测试画面',
-        cameraSource: '摄像头', frameRate: '帧率', serverPort: '服务端口', storageOrganization: '文件分类', organizationDay: '按天', organizationMonth: '按月', organizationNone: '无', cameraDevice: '摄像头设备', refreshCameras: '重新检测摄像头', cameraMode: '硬件模式', manualMode: '手工设置', pixelMode: '像素格式', codecMode: '视频编码', pixelFormat: '输入像素格式', videoCodec: '输入视频编码',
+        cameraSource: '摄像头', frameRate: '帧率', serverPort: '服务端口', storageOrganization: '文件分类', organizationDay: '按天', organizationMonth: '按月', organizationNone: '无', cameraDevice: '摄像头设备', refreshCameras: '重新检测摄像头', cameraMode: '硬件模式', manualMode: '手工设置', automaticFormat: '自动检测', manualPixelFormat: '输入像素格式', pixelMode: '像素格式', codecMode: '视频编码', pixelFormat: '输入像素格式', videoCodec: '输入视频编码',
         detectingCameras: '正在检测摄像头', noCameras: '未检测到摄像头', unavailableCamera: '{name}（当前不可用）', width: '宽度', height: '高度',
         bufferDuration: '内存缓冲时长（秒）', jpegQuality: 'JPEG 质量（2 最佳）', maxRecordingDuration: '最长录制时长（分钟）', storageDirectory: '视频存储目录', selectDirectory: '选择视频存储目录',
         allowedOrigins: '允许的 Web 应用 Origin', originsPlaceholder: '例如 https://app.example.com，多个地址用逗号分隔',
@@ -200,7 +201,7 @@
         refreshStatus: 'Refresh status', livePreview: 'Live Preview', waitingStream: 'Waiting for video stream', noFrame: 'No video frame',
         captureStatus: 'Status', capturedDuration: 'Recorded duration', resetCapture: 'New recording', bufferedFrames: 'Recorded frames', memoryUsage: 'Memory buffer', previewConnections: 'Preview clients',
         captureConfig: 'Capture Settings', configRestartHint: 'Camera reconnects when input parameters change', videoSource: 'Video source', mockSource: 'Test pattern',
-        cameraSource: 'Camera', frameRate: 'Frame rate', serverPort: 'Service port', storageOrganization: 'File organization', organizationDay: 'By day', organizationMonth: 'By month', organizationNone: 'None', cameraDevice: 'Camera device', refreshCameras: 'Detect cameras again', cameraMode: 'Hardware mode', manualMode: 'Manual settings', pixelMode: 'Pixel format', codecMode: 'Video codec', pixelFormat: 'Input pixel format', videoCodec: 'Input video codec',
+        cameraSource: 'Camera', frameRate: 'Frame rate', serverPort: 'Service port', storageOrganization: 'File organization', organizationDay: 'By day', organizationMonth: 'By month', organizationNone: 'None', cameraDevice: 'Camera device', refreshCameras: 'Detect cameras again', cameraMode: 'Hardware mode', manualMode: 'Manual settings', automaticFormat: 'Auto detect', manualPixelFormat: 'Enter pixel format', pixelMode: 'Pixel format', codecMode: 'Video codec', pixelFormat: 'Input pixel format', videoCodec: 'Input video codec',
         detectingCameras: 'Detecting cameras', noCameras: 'No cameras detected', unavailableCamera: '{name} (currently unavailable)', width: 'Width', height: 'Height',
         bufferDuration: 'Memory buffer duration (seconds)', jpegQuality: 'JPEG quality (2 is best)', maxRecordingDuration: 'Maximum recording duration (minutes)', storageDirectory: 'Video storage directory', selectDirectory: 'Select video storage directory',
         allowedOrigins: 'Allowed web application origins', originsPlaceholder: 'For example https://app.example.com; separate multiple origins with commas',
@@ -273,11 +274,14 @@
     let socket;
     let reconnectTimer;
     let camerasLoading = false;
+    let capabilitiesLoading = false;
     let capabilityRequest = 0;
     let lastCaptureWarning = '';
     let currentState = 'reconnecting';
     let currentRecordingState = 'previewing';
     let cameraModes = [];
+    let detectedPixelFormats = [];
+    let cameraPlatform = '';
 
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -320,7 +324,7 @@
 
     function configuredPort(address) {
       const match = String(address).match(/:(\d+)$/);
-      return match ? Number(match[1]) : 9000;
+      return match ? Number(match[1]) : 8800;
     }
 
     function addressWithPort(address, port) {
@@ -331,7 +335,8 @@
       const payload = await api('/api/v1/config');
       config = payload.data;
       $('source').value = config.capture.source;
-      $('pixelFormat').value = config.capture.pixelFormat || '';
+      detectedPixelFormats = [];
+      setPixelFormatValue(config.capture.pixelFormat || '');
       $('videoCodec').value = config.capture.videoCodec || '';
       $('width').value = config.capture.width;
       $('height').value = config.capture.height;
@@ -371,6 +376,37 @@
       $(id).replaceChildren(...unique.map((value) => new Option(String(value))));
     }
 
+    function pixelFormatValue() {
+      return $('pixelFormatSelect').value === '__manual__' ? $('pixelFormat').value.trim() : $('pixelFormatSelect').value;
+    }
+
+    function setPixelFormatValue(value) {
+      value = String(value || '').trim();
+      const options = [new Option(t('automaticFormat'), '')];
+      detectedPixelFormats.forEach((format) => options.push(new Option(format, format)));
+      options.push(new Option(t('manualMode'), '__manual__'));
+      $('pixelFormatSelect').replaceChildren(...options);
+      if (value && detectedPixelFormats.includes(value)) {
+        $('pixelFormatSelect').value = value;
+      } else if (value) {
+        $('pixelFormatSelect').value = '__manual__';
+        $('pixelFormat').value = value;
+      } else {
+        $('pixelFormatSelect').value = '';
+        $('pixelFormat').value = '';
+      }
+      $('pixelFormat').hidden = $('pixelFormatSelect').value !== '__manual__';
+    }
+
+    function updateCameraInputFields() {
+      const camera = $('source').value === 'camera';
+      const codecSupported = !cameraPlatform || cameraPlatform === 'windows';
+      $('videoCodecField').hidden = camera && !codecSupported;
+      $('videoCodec').disabled = !camera || !codecSupported;
+      $('pixelFormatSelect').disabled = !camera || capabilitiesLoading;
+      $('pixelFormat').disabled = !camera || capabilitiesLoading || $('pixelFormatSelect').value !== '__manual__';
+    }
+
     function setCapabilityMeta(message = '', type = '') {
       const meta = $('cameraCapabilityMeta');
       meta.textContent = message;
@@ -378,7 +414,7 @@
     }
 
     function modeMatchesInputs(mode) {
-      return (mode.pixelFormat || '') === $('pixelFormat').value.trim() &&
+      return (mode.pixelFormat || '') === pixelFormatValue() &&
         (mode.videoCodec || '') === $('videoCodec').value.trim() &&
         Number(mode.width) === Number($('width').value) &&
         Number(mode.height) === Number($('height').value) &&
@@ -397,7 +433,7 @@
 
     function applyCameraMode(mode) {
       if (!mode) return;
-      $('pixelFormat').value = mode.pixelFormat || '';
+      setPixelFormatValue(mode.pixelFormat || '');
       $('videoCodec').value = mode.videoCodec || '';
       if (mode.width) $('width').value = mode.width;
       if (mode.height) $('height').value = mode.height;
@@ -405,7 +441,7 @@
     }
 
     function updateModeDatalists() {
-      const selectedPixelFormat = $('pixelFormat').value.trim();
+      const selectedPixelFormat = pixelFormatValue();
       const selectedVideoCodec = $('videoCodec').value.trim();
       const matchingModes = cameraModes.filter((mode) =>
         (!selectedPixelFormat && !selectedVideoCodec) ||
@@ -423,25 +459,32 @@
       syncCameraModeSelection();
     }
 
-    async function loadCameraCapabilities(applyRecommended = false, preserveInput = false) {
+    async function loadCameraCapabilities(applyRecommended = false, preserveInput = false, allowRetry = true) {
       const device = $('device').value;
       if ($('source').value !== 'camera' || !device) {
         cameraModes = [];
+        detectedPixelFormats = [];
+        cameraPlatform = '';
+        setPixelFormatValue(pixelFormatValue());
         renderCameraModes();
-        setDatalist('pixelFormatOptions', []);
         setDatalist('videoCodecOptions', []);
         setDatalist('widthOptions', []);
         setDatalist('heightOptions', []);
         setDatalist('fpsOptions', []);
         setCapabilityMeta();
+        updateCameraInputFields();
         return;
       }
       const request = ++capabilityRequest;
+      const requestedPixelFormat = pixelFormatValue();
+      const requestedVideoCodec = $('videoCodec').value.trim();
+      capabilitiesLoading = true;
+      updateDeviceState();
       setCapabilityMeta(t('detectingCapabilities'));
       try {
         const query = new URLSearchParams({device});
-        if (preserveInput && $('pixelFormat').value.trim()) query.set('pixelFormat', $('pixelFormat').value.trim());
-        if (preserveInput && $('videoCodec').value.trim()) query.set('videoCodec', $('videoCodec').value.trim());
+        if (preserveInput && requestedPixelFormat) query.set('pixelFormat', requestedPixelFormat);
+        if (preserveInput && requestedVideoCodec) query.set('videoCodec', requestedVideoCodec);
         const payload = await api(`/api/v1/cameras/capabilities?${query}`);
         if (request !== capabilityRequest) return;
         const data = payload.data || {};
@@ -449,10 +492,27 @@
         const codecs = Array.isArray(data.videoCodecs) ? data.videoCodecs : [];
         const modes = Array.isArray(data.modes) ? data.modes : [];
         const recommended = data.recommended || {};
-        setDatalist('pixelFormatOptions', formats);
+        cameraPlatform = data.platform || cameraPlatform;
+        detectedPixelFormats = [...new Set(formats.filter(Boolean))];
+        const requestedSupported = !requestedPixelFormat || detectedPixelFormats.includes(requestedPixelFormat) || modes.some((mode) => mode.pixelFormat === requestedPixelFormat);
+        let selectedPixelFormat = requestedPixelFormat;
+        if (!selectedPixelFormat || !requestedSupported || applyRecommended) {
+          selectedPixelFormat = recommended.pixelFormat || (!requestedVideoCodec ? detectedPixelFormats[0] : '') || selectedPixelFormat;
+        }
+        setPixelFormatValue(selectedPixelFormat);
+        if (cameraPlatform && cameraPlatform !== 'windows') $('videoCodec').value = '';
         setDatalist('videoCodecOptions', codecs);
-        if (applyRecommended && !preserveInput) applyCameraMode(recommended);
+
+        const probedPixelFormat = query.get('pixelFormat') || '';
+        if (allowRetry && selectedPixelFormat && selectedPixelFormat !== probedPixelFormat && modes.length === 0) {
+          return await loadCameraCapabilities(true, true, false);
+        }
+
         cameraModes = modes;
+        if (applyRecommended || !requestedPixelFormat || !requestedSupported) {
+          const recommendedMode = recommended.width ? recommended : cameraModes.find((mode) => mode.pixelFormat === selectedPixelFormat || mode.videoCodec === requestedVideoCodec);
+          applyCameraMode(recommendedMode);
+        }
         renderCameraModes();
         updateModeDatalists();
         syncCameraModeSelection();
@@ -464,6 +524,11 @@
       } catch (error) {
         if (request !== capabilityRequest) return;
         setCapabilityMeta(t('capabilityDetectionFailed', {message: error.message}), 'error');
+      } finally {
+        if (request === capabilityRequest) {
+          capabilitiesLoading = false;
+          updateDeviceState();
+        }
       }
     }
 
@@ -570,10 +635,9 @@
       const camera = $('source').value === 'camera';
       $('device').disabled = !camera || camerasLoading;
       $('device').required = camera;
-      $('cameraMode').disabled = !camera || camerasLoading;
-      $('pixelFormat').disabled = !camera;
-      $('videoCodec').disabled = !camera;
+      $('cameraMode').disabled = !camera || camerasLoading || capabilitiesLoading;
       $('refreshCamerasButton').disabled = !camera || camerasLoading;
+      updateCameraInputFields();
     }
 
     function connectPreview() {
@@ -613,12 +677,23 @@
       updateModeDatalists();
       syncCameraModeSelection();
     });
+    $('pixelFormatSelect').addEventListener('change', () => {
+      const manual = $('pixelFormatSelect').value === '__manual__';
+      $('pixelFormat').hidden = !manual;
+      $('pixelFormat').disabled = !manual;
+      if (manual) {
+        $('pixelFormat').focus();
+        return;
+      }
+      if (pixelFormatValue()) $('videoCodec').value = '';
+      loadCameraCapabilities($('pixelFormatSelect').value === '', true);
+    });
     $('pixelFormat').addEventListener('change', () => {
       if ($('pixelFormat').value.trim()) $('videoCodec').value = '';
       loadCameraCapabilities(false, true);
     });
     $('videoCodec').addEventListener('change', () => {
-      if ($('videoCodec').value.trim()) $('pixelFormat').value = '';
+      if ($('videoCodec').value.trim()) setPixelFormatValue('');
       loadCameraCapabilities(false, true);
     });
     for (const id of ['width', 'height', 'fps']) $(id).addEventListener('input', syncCameraModeSelection);
@@ -638,7 +713,7 @@
         showNotice(t('missingCamera'), 'error');
         return;
       }
-      const pixelFormat = $('pixelFormat').value.trim();
+      const pixelFormat = pixelFormatValue();
       const videoCodec = $('videoCodec').value.trim();
       if ($('source').value === 'camera' && Boolean(pixelFormat) === Boolean(videoCodec)) {
         showNotice(t('missingInputFormat'), 'error');

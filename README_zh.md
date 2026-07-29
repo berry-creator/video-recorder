@@ -58,7 +58,7 @@
 go run -tags=headless ./cmd/recorder
 ```
 
-默认从 `127.0.0.1:9000` 启动。访问 <http://127.0.0.1:9000/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `9001`、`9002` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。开发运行时若存在 `configs/config.json` 则使用该文件；打包后的应用会在系统用户配置目录中创建配置，例如 macOS 的 `~/Library/Application Support/video-recorder/config.json` 和 Windows 的 `%AppData%\video-recorder\config.json`。视频写入配置的存储目录。
+默认从 `127.0.0.1:8800` 启动。访问 <http://127.0.0.1:8800/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `8801`、`8802` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。开发运行时若存在 `configs/config.json` 则使用该文件；打包后的应用会在系统用户配置目录中创建配置，例如 macOS 的 `~/Library/Application Support/video-recorder/config.json` 和 Windows 的 `%AppData%\video-recorder\config.json`。macOS 首次生成的配置默认将 `capture.ffmpegPath` 设为 `/opt/homebrew/bin/ffmpeg`，其他平台默认从 `PATH` 查找 `ffmpeg`。视频写入配置的存储目录。
 
 控制台首次打开时根据 `navigator.languages`/`navigator.language` 自动选择中文或英文。页眉中的语言选择器可以手动覆盖并记住选择；切回“自动”会恢复浏览器语言检测。
 
@@ -147,7 +147,7 @@ ws://127.0.0.1:<实际端口>/ws/live
 | `GET` | `/api/v1/status` | 设备、录像、缓冲和预览连接状态 |
 | `POST` | `/api/v1/capture/reset` | 丢弃尚未保存的录像并开始新的录像 |
 
-Console 提供数值形式的服务端口配置。修改端口后需重启应用才会生效，其他采集和存储配置立即生效。自动端口回退仅用于默认端口 `9000`；明确配置的其他端口会严格绑定，不会静默切换。
+Console 提供数值形式的服务端口配置。修改端口后需重启应用才会生效，其他采集和存储配置立即生效。自动端口回退仅用于默认端口 `8800`；明确配置的其他端口会严格绑定，不会静默切换。
 
 控制台状态包括“设备不可用”“重连中”“实时预览”“录制中”和“超时停止录制”。“已录制时间”和“已录制帧数”只统计当前活动录像。“新的录制”会先清除当前内存批次和临时文件，再开始录像；“保存”在录像加入队列后停止录像，但 FFmpeg 和实时预览保持运行。达到配置的最长时长后会停止录像，并删除所有尚未保存的内存和临时文件数据；默认时长为 60 分钟。当 FFmpeg 包含 `drawtext` 时，实时预览和导出视频的右上角仅显示当前时间。
 
@@ -160,7 +160,7 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 ```json
 {
   "server": {
-    "address": "127.0.0.1:9000",
+    "address": "127.0.0.1:8800",
     "allowedOrigins": ["https://app.example.com"]
   }
 }
@@ -173,7 +173,7 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 ```json
 {
   "server": {
-    "address": "127.0.0.1:9000",
+    "address": "127.0.0.1:8800",
     "allowedOrigins": []
   },
   "capture": {

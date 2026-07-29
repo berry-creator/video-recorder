@@ -30,6 +30,7 @@ type CameraMode struct {
 }
 
 type CameraCapabilities struct {
+	Platform          string       `json:"platform"`
 	Device            string       `json:"device"`
 	PixelFormats      []string     `json:"pixelFormats"`
 	VideoCodecs       []string     `json:"videoCodecs"`
@@ -76,7 +77,7 @@ func (d *CameraDetector) Capabilities(ctx context.Context, ffmpegPath, device, p
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	capabilities := CameraCapabilities{Device: device, PixelFormats: []string{}, VideoCodecs: []string{}, Modes: []CameraMode{}, Warnings: []string{}}
+	capabilities := CameraCapabilities{Platform: d.platform, Device: device, PixelFormats: []string{}, VideoCodecs: []string{}, Modes: []CameraMode{}, Warnings: []string{}}
 	filterOutput, filterErr := d.run(ctx, ffmpegPath, "-hide_banner", "-filters")
 	capabilities.DrawtextAvailable = filterErr == nil && hasFFmpegFilter(string(filterOutput), "drawtext")
 	if !capabilities.DrawtextAvailable {
@@ -96,23 +97,26 @@ func (d *CameraDetector) Capabilities(ctx context.Context, ffmpegPath, device, p
 		if formatErr == nil && len(capabilities.PixelFormats) == 0 {
 			capabilities.PixelFormats = append(capabilities.PixelFormats, "monob")
 		}
-		selected := pixelFormat
-		if selected == "" {
-			selected = recommendedPixelFormat(capabilities.PixelFormats)
-		}
-		if selected != "" {
+		candidates := avFoundationProbeFormats(pixelFormat, capabilities.PixelFormats)
+		for _, selected := range candidates {
 			probeOutput, probeErr = d.run(ctx, ffmpegPath,
 				"-hide_banner", "-loglevel", "verbose", "-f", "avfoundation",
 				"-pixel_format", selected, "-framerate", "123", "-video_size", "123x123",
 				"-i", avFoundationInput(device),
 				"-frames:v", "1", "-f", "null", "-",
 			)
+			for _, format := range parseAVFoundationPixelFormats(string(probeOutput)) {
+				capabilities.PixelFormats = appendUniqueString(capabilities.PixelFormats, format)
+			}
 			capabilities.Modes = parseAVFoundationModes(string(probeOutput), selected)
-		}
-		if len(capabilities.Modes) == 0 {
-			if mode, ok := parseAVFoundationStreamMode(string(probeOutput)); ok {
-				capabilities.Modes = appendUniqueMode(capabilities.Modes, mode)
-				capabilities.PixelFormats = appendUniqueString(capabilities.PixelFormats, mode.PixelFormat)
+			if len(capabilities.Modes) == 0 {
+				if mode, ok := parseAVFoundationStreamMode(string(probeOutput)); ok {
+					capabilities.Modes = appendUniqueMode(capabilities.Modes, mode)
+					capabilities.PixelFormats = appendUniqueString(capabilities.PixelFormats, mode.PixelFormat)
+				}
+			}
+			if len(capabilities.Modes) > 0 {
+				break
 			}
 		}
 		if len(capabilities.Modes) == 0 {
@@ -157,8 +161,44 @@ func (d *CameraDetector) Capabilities(ctx context.Context, ffmpegPath, device, p
 			capabilities.VideoCodecs = appendUniqueString(capabilities.VideoCodecs, mode.VideoCodec)
 		}
 	}
-	capabilities.Recommended = recommendCameraMode(pixelFormat, videoCodec, capabilities.PixelFormats, capabilities.VideoCodecs, capabilities.Modes)
+	preferredPixelFormat := pixelFormat
+	if preferredPixelFormat != "" && !containsString(capabilities.PixelFormats, preferredPixelFormat) && !containsModeInput(capabilities.Modes, preferredPixelFormat, "") {
+		preferredPixelFormat = ""
+	}
+	preferredVideoCodec := videoCodec
+	if preferredVideoCodec != "" && !containsString(capabilities.VideoCodecs, preferredVideoCodec) && !containsModeInput(capabilities.Modes, "", preferredVideoCodec) {
+		preferredVideoCodec = ""
+	}
+	capabilities.Recommended = recommendCameraMode(preferredPixelFormat, preferredVideoCodec, capabilities.PixelFormats, capabilities.VideoCodecs, capabilities.Modes)
 	return capabilities, nil
+}
+
+func containsModeInput(modes []CameraMode, pixelFormat, videoCodec string) bool {
+	for _, mode := range modes {
+		if (pixelFormat != "" && mode.PixelFormat == pixelFormat) || (videoCodec != "" && mode.VideoCodec == videoCodec) {
+			return true
+		}
+	}
+	return false
+}
+
+func avFoundationProbeFormats(requested string, detected []string) []string {
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return []string{requested}
+	}
+	candidates := []string{}
+	if recommended := recommendedPixelFormat(detected); recommended != "" {
+		candidates = append(candidates, recommended)
+	}
+	for _, format := range detected {
+		candidates = appendUniqueString(candidates, format)
+	}
+	if len(candidates) == 0 {
+		for _, format := range []string{"nv12", "uyvy422", "yuyv422", "bgr0", "0rgb"} {
+			candidates = append(candidates, format)
+		}
+	}
+	return candidates
 }
 
 func avFoundationInput(device string) string {
