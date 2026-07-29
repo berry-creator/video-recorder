@@ -97,6 +97,15 @@ func TestParseAVFoundationCapabilities(t *testing.T) {
 	}
 }
 
+func TestParseAVFoundationDefaultStreamMode(t *testing.T) {
+	output := `[avfoundation @ 0x1] Stream #0:0: Video: rawvideo (UYVY / 0x59565955), uyvy422, 1920x1080, 995328 kb/s, 29.97 fps, 29.97 tbr, 1000k tbn`
+	want := CameraMode{PixelFormat: "uyvy422", Width: 1920, Height: 1080, FPS: 30}
+	got, ok := parseAVFoundationStreamMode(output)
+	if !ok || got != want {
+		t.Fatalf("default stream mode = %#v, %v, want %#v, true", got, ok, want)
+	}
+}
+
 func TestParseDirectShowCapabilities(t *testing.T) {
 	output := `[dshow @ 0001]   pixel_format=yuyv422 min s=640x480 fps=5 max s=1280x720 fps=30
 [dshow @ 0001]   pixel_format=nv12 min s=1280x720 fps=5 max s=1920x1080 fps=30
@@ -160,5 +169,32 @@ func TestAVFoundationCapabilitiesProbeSelectedDevice(t *testing.T) {
 		if input := argumentAfter(call, "-i"); input != "7:none" {
 			t.Fatalf("AVFoundation probe input = %q, want selected device 7:none; args = %#v", input, call)
 		}
+	}
+}
+
+func TestAVFoundationCapabilitiesFallBackToDefaultStreamMode(t *testing.T) {
+	detector := &CameraDetector{
+		platform: "darwin",
+		run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			switch {
+			case containsString(args, "-filters"):
+				return []byte(" T.S. drawtext V->V Draw text"), nil
+			case containsString(args, "monob"):
+				return []byte("[in#0 @ 0x1] Supported pixel formats:\n[in#0 @ 0x1] nv12"), errors.New("unsupported pixel format")
+			case containsString(args, "123x123"):
+				return []byte("configuration failed"), errors.New("unsupported mode")
+			default:
+				return []byte("Stream #0:0: Video: rawvideo, nv12, 1280x720, 30 fps"), nil
+			}
+		},
+	}
+
+	capabilities, err := detector.Capabilities(context.Background(), "ffmpeg", "0", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := CameraMode{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30}
+	if len(capabilities.Modes) != 1 || capabilities.Modes[0] != want || capabilities.Recommended != want {
+		t.Fatalf("capabilities = %#v, want default mode %#v", capabilities, want)
 	}
 }

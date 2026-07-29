@@ -131,6 +131,9 @@ func (c Config) validate(requireCameraInput bool) error {
 	if c.Capture.Source == "camera" {
 		hasPixelFormat := strings.TrimSpace(c.Capture.PixelFormat) != ""
 		hasVideoCodec := strings.TrimSpace(c.Capture.VideoCodec) != ""
+		if hasVideoCodec && runtime.GOOS != "windows" {
+			return errors.New("camera video codec inputs are supported only on Windows")
+		}
 		if hasPixelFormat && hasVideoCodec {
 			return errors.New("camera requires exactly one pixel format or video codec")
 		}
@@ -202,10 +205,21 @@ func Load(path string) (*Store, error) {
 }
 
 func normalizeLoadedConfig(cfg *Config) bool {
-	if cfg.Capture.Source != "camera" || strings.TrimSpace(cfg.Capture.VideoCodec) == "" || strings.TrimSpace(cfg.Capture.PixelFormat) == "" {
+	return normalizeLoadedConfigForPlatform(cfg, runtime.GOOS)
+}
+
+func normalizeLoadedConfigForPlatform(cfg *Config, platform string) bool {
+	if cfg.Capture.Source != "camera" || strings.TrimSpace(cfg.Capture.VideoCodec) == "" {
 		return false
 	}
-	cfg.Capture.PixelFormat = ""
+	if platform == "windows" {
+		if strings.TrimSpace(cfg.Capture.PixelFormat) == "" {
+			return false
+		}
+		cfg.Capture.PixelFormat = ""
+		return true
+	}
+	cfg.Capture.VideoCodec = ""
 	return true
 }
 

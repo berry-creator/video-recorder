@@ -109,6 +109,25 @@ func (d *CameraDetector) Capabilities(ctx context.Context, ffmpegPath, device, p
 			)
 			capabilities.Modes = parseAVFoundationModes(string(probeOutput), selected)
 		}
+		if len(capabilities.Modes) == 0 {
+			if mode, ok := parseAVFoundationStreamMode(string(probeOutput)); ok {
+				capabilities.Modes = appendUniqueMode(capabilities.Modes, mode)
+				capabilities.PixelFormats = appendUniqueString(capabilities.PixelFormats, mode.PixelFormat)
+			}
+		}
+		if len(capabilities.Modes) == 0 {
+			defaultOutput, defaultErr := d.run(ctx, ffmpegPath,
+				"-hide_banner", "-loglevel", "verbose", "-f", "avfoundation",
+				"-i", avFoundationInput(device),
+				"-frames:v", "1", "-f", "null", "-",
+			)
+			if mode, ok := parseAVFoundationStreamMode(string(defaultOutput)); ok {
+				capabilities.Modes = appendUniqueMode(capabilities.Modes, mode)
+				capabilities.PixelFormats = appendUniqueString(capabilities.PixelFormats, mode.PixelFormat)
+			}
+			probeOutput = append(probeOutput, defaultOutput...)
+			probeErr = defaultErr
+		}
 	case "windows":
 		probeOutput, probeErr = d.run(ctx, ffmpegPath,
 			"-hide_banner", "-list_options", "true", "-f", "dshow", "-i", "video="+device,
@@ -191,6 +210,34 @@ func parseAVFoundationModes(output, pixelFormat string) []CameraMode {
 		modes = appendUniqueMode(modes, CameraMode{PixelFormat: pixelFormat, Width: width, Height: height, FPS: int(maximum + 0.5)})
 	}
 	return modes
+}
+
+func parseAVFoundationStreamMode(output string) (CameraMode, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "Video:") {
+			continue
+		}
+		resolution := streamResolutionPattern.FindStringSubmatch(line)
+		frameRate := streamFPSPattern.FindStringSubmatch(line)
+		if len(resolution) != 3 || len(frameRate) != 2 {
+			continue
+		}
+		width, _ := strconv.Atoi(resolution[1])
+		height, _ := strconv.Atoi(resolution[2])
+		fps, _ := strconv.ParseFloat(frameRate[1], 64)
+		pixelFormat := ""
+		parts := strings.Split(line[strings.Index(line, "Video:")+len("Video:"):], ",")
+		if len(parts) > 1 {
+			candidate := strings.TrimSpace(parts[1])
+			if simpleFormatPattern.MatchString(candidate) {
+				pixelFormat = candidate
+			}
+		}
+		if width > 0 && height > 0 && fps > 0 {
+			return CameraMode{PixelFormat: pixelFormat, Width: width, Height: height, FPS: int(fps + 0.5)}, true
+		}
+	}
+	return CameraMode{}, false
 }
 
 func parseDirectShowCapabilities(output string) ([]string, []string, []CameraMode) {
@@ -389,6 +436,8 @@ var (
 	directShowAltPattern      = regexp.MustCompile(`^\[[^]]+\]\s+Alternative name "(.*)"\s*$`)
 	simpleFormatPattern       = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 	avFoundationModePattern   = regexp.MustCompile(`(\d+)x(\d+)@\[([0-9.]+)\s+([0-9.]+)\]fps`)
+	streamResolutionPattern   = regexp.MustCompile(`(?:^|[,\s])(\d{2,5})x(\d{2,5})(?:[,\s]|$)`)
+	streamFPSPattern          = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)\s+fps\b`)
 	directShowModePattern     = regexp.MustCompile(`(pixel_format|vcodec)=([A-Za-z0-9_]+).*min s=(\d+)x(\d+) fps=([0-9.]+) max s=(\d+)x(\d+) fps=([0-9.]+)`)
 	v4l2RawFormatPattern      = regexp.MustCompile(`(?i)Raw\s*:\s*([A-Za-z0-9_]+)\s*:.*:\s*(.+)$`)
 	resolutionPattern         = regexp.MustCompile(`(\d+)x(\d+)`)

@@ -275,23 +275,17 @@ func captureArgs(cfg config.CaptureConfig, includeWatermark bool) ([]string, err
 func cameraInputArgs(platform string, cfg config.CaptureConfig, resolution, fps string) ([]string, error) {
 	switch platform {
 	case "linux":
-		if cfg.VideoCodec != "" {
-			return nil, errors.New("video codec camera inputs are unsupported on linux")
-		}
 		args := []string{"-f", "v4l2"}
 		if cfg.PixelFormat != "" {
 			args = append(args, "-input_format", cfg.PixelFormat)
 		}
 		return append(args, "-framerate", fps, "-video_size", resolution, "-i", cfg.Device), nil
 	case "darwin":
-		if cfg.VideoCodec != "" {
-			return nil, errors.New("video codec camera inputs are unsupported on macOS")
-		}
 		args := []string{"-f", "avfoundation"}
 		if cfg.PixelFormat != "" {
-			args = append(args, "-pixel_format", cfg.PixelFormat)
+			args = append(args, "-pixel_format", cfg.PixelFormat, "-framerate", fps, "-video_size", resolution)
 		}
-		return append(args, "-framerate", fps, "-video_size", resolution, "-i", avFoundationInput(cfg.Device)), nil
+		return append(args, "-i", avFoundationInput(cfg.Device)), nil
 	case "windows":
 		args := []string{"-f", "dshow"}
 		if cfg.VideoCodec != "" {

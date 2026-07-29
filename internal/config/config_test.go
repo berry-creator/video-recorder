@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -21,7 +22,11 @@ func TestLoadNormalizesAmbiguousCameraInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded := store.Get().Capture
-	if loaded.PixelFormat != "" || loaded.VideoCodec != "mjpeg" {
+	wantPixelFormat, wantVideoCodec := "nv12", ""
+	if runtime.GOOS == "windows" {
+		wantPixelFormat, wantVideoCodec = "", "mjpeg"
+	}
+	if loaded.PixelFormat != wantPixelFormat || loaded.VideoCodec != wantVideoCodec {
 		t.Fatalf("normalized camera input = %#v", loaded)
 	}
 
@@ -33,8 +38,38 @@ func TestLoadNormalizesAmbiguousCameraInput(t *testing.T) {
 	if err := json.Unmarshal(data, &persisted); err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Capture.PixelFormat != "" || persisted.Capture.VideoCodec != "mjpeg" {
+	if persisted.Capture.PixelFormat != wantPixelFormat || persisted.Capture.VideoCodec != wantVideoCodec {
 		t.Fatalf("normalized camera input was not persisted: %#v", persisted.Capture)
+	}
+}
+
+func TestNormalizeLoadedCameraInputByPlatform(t *testing.T) {
+	tests := []struct {
+		platform        string
+		pixelFormat     string
+		videoCodec      string
+		wantPixelFormat string
+		wantVideoCodec  string
+	}{
+		{platform: "windows", pixelFormat: "yuyv422", videoCodec: "mjpeg", wantVideoCodec: "mjpeg"},
+		{platform: "darwin", pixelFormat: "nv12", videoCodec: "mjpeg", wantPixelFormat: "nv12"},
+		{platform: "darwin", videoCodec: "mjpeg"},
+		{platform: "linux", videoCodec: "mjpeg"},
+	}
+	for _, test := range tests {
+		t.Run(test.platform+"/"+test.pixelFormat+"/"+test.videoCodec, func(t *testing.T) {
+			cfg := Default()
+			cfg.Capture.Source = "camera"
+			cfg.Capture.Device = "camera"
+			cfg.Capture.PixelFormat = test.pixelFormat
+			cfg.Capture.VideoCodec = test.videoCodec
+			if !normalizeLoadedConfigForPlatform(&cfg, test.platform) {
+				t.Fatal("camera input was not normalized")
+			}
+			if cfg.Capture.PixelFormat != test.wantPixelFormat || cfg.Capture.VideoCodec != test.wantVideoCodec {
+				t.Fatalf("normalized input = (%q, %q), want (%q, %q)", cfg.Capture.PixelFormat, cfg.Capture.VideoCodec, test.wantPixelFormat, test.wantVideoCodec)
+			}
+		})
 	}
 }
 
@@ -171,7 +206,9 @@ func TestCameraSourceRequiresSpecificDevice(t *testing.T) {
 		t.Fatal("Validate() accepted both a pixel format and video codec")
 	}
 	cfg.Capture.PixelFormat = ""
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() rejected a video codec camera input: %v", err)
+	if err := cfg.Validate(); runtime.GOOS == "windows" && err != nil {
+		t.Fatalf("Validate() rejected a Windows video codec camera input: %v", err)
+	} else if runtime.GOOS != "windows" && err == nil {
+		t.Fatal("Validate() accepted a video codec camera input outside Windows")
 	}
 }

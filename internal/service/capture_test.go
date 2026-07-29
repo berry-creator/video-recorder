@@ -79,8 +79,22 @@ func TestCameraInputArgsAllowDeviceDefaultFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if argumentAfter(args, "-pixel_format") != "" || argumentAfter(args, "-i") != "0:none" {
+	if argumentAfter(args, "-pixel_format") != "" || argumentAfter(args, "-framerate") != "" || argumentAfter(args, "-video_size") != "" || argumentAfter(args, "-i") != "0:none" {
 		t.Fatalf("macOS default-format camera args = %#v", args)
+	}
+}
+
+func TestMacOSCameraInputArgsIgnoreUnsupportedVideoCodec(t *testing.T) {
+	cfg := config.Default().Capture
+	cfg.Source = "camera"
+	cfg.Device = "0"
+	cfg.VideoCodec = "mjpeg"
+	args, err := cameraInputArgs("darwin", cfg, "1280x720", "30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argumentAfter(args, "-vcodec") != "" || argumentAfter(args, "-pixel_format") != "" || argumentAfter(args, "-i") != "0:none" {
+		t.Fatalf("macOS fallback camera args = %#v", args)
 	}
 }
 
