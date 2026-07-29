@@ -6,15 +6,16 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#桌面构建)
 [![DevContainer](https://img.shields.io/badge/DevContainer-Supported-007ACC?style=flat&logo=visualstudiocode)](.devcontainer/devcontainer.json)
 
-本地视频采集服务。进程通过 FFmpeg 读取所选的内置、外接或虚拟摄像头，将 JPEG 帧保存在内存 RingBuffer 中，并向 Web 应用提供低延迟 WebSocket 预览和异步 MP4 保存。每次保存任务被接受后都会开始新的采集会话，确保已保存的帧不会再次保存。
+本地视频录像服务。进程通过 FFmpeg 读取所选的内置、外接或虚拟摄像头，并持续提供低延迟 WebSocket 实时预览。只有明确开始录像后才会将 JPEG 帧写入临时存储，并可异步保存为 MP4；开始和保存录像均不会重启摄像头或 FFmpeg 进程。
 
 ## 功能
 
 - 摄像头采集，采集进程异常后自动重连
-- 按时长裁剪的线程安全内存 RingBuffer
+- 可配置内存批次且线程安全的磁盘临时采集片段
+- 显式录像会话、可配置自动超时以及超时数据清理
 - WebSocket 实时 JPEG 帧预览，慢客户端不会阻塞采集
 - 异步 H.264 MP4 导出，临时文件编码成功后原子发布
-- 实时预览与导出文件共用开始时间和当前时间水印
+- 实时预览与导出文件可共用当前时间水印
 - 导出队列、重复文件名自动编号与任务状态查询
 - 支持中英文且可自动选择语言的本地配置和预览控制台
 - Windows、macOS 和 Linux 原生托盘，菜单根据系统语言自动使用中文或英文，并支持可选的 headless 模式
@@ -30,18 +31,17 @@
 │  │ OS SysTray UI │     │     Camera Video Stream     │  │
 │  └───────────────┘     └──────────────┬──────────────┘  │
 │                                       │                 │
-│                                       ▼                 │
-│                        ┌─────────────────────────────┐  │
-│                        │ In-Memory Video RingBuffer  │  │
-│                        └──────────────┬──────────────┘  │
-│                                       │                 │
 │             ┌─────────────────────────┴───────┐         │
 │             │                                 │         │
 │             ▼                                 ▼         │
-│  ┌────────────────────┐                ┌──────┴──────┐  │
-│  │ WebSocket Service  │                │ Video Slice │  │
-│  │ (Live Web Preview) │                │ Export Task │  │
-│  └──────────┬─────────┘                └──────┬──────┘  │
+│  ┌────────────────────┐      ┌────────────────────────┐ │
+│  │ WebSocket Service  │      │ Active Recording Only  │ │
+│  │ (Live Web Preview) │      │ Memory + Temporary File│ │
+│  └──────────┬─────────┘      └───────────┬────────────┘ │
+│             │                            ▼              │
+│             │                    ┌──────────────┐       │
+│             │                    │ Export Task  │       │
+│             │                    └──────┬───────┘       │
 └─────────────┼─────────────────────────────────┼─────────┘
               │ WebSocket                       │ POST /api/v1/record/save
               ▼                                 │ (with fileName)
@@ -52,13 +52,13 @@
 
 ## 快速开始
 
-要求 Go 1.22+ 和 FFmpeg 5+。FFmpeg 必须包含 `mjpeg` 解码器、`libx264` 编码器，以及带 FreeType/字体支持的 `drawtext` 滤镜。
+要求 Go 1.22+ 和 FFmpeg 5+。FFmpeg 必须包含 `mjpeg` 解码器和 `libx264` 编码器。`drawtext` 滤镜为可选能力；缺少时会继续无水印采集，并在 Console 中显示提示。
 
 ```bash
 go run -tags=headless ./cmd/recorder
 ```
 
-默认从 `127.0.0.1:9000` 启动。访问 <http://127.0.0.1:9000/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `9001`、`9002` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 26 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。配置保存在 `configs/config.json`，视频默认写入 `recordings/`。
+默认从 `127.0.0.1:9000` 启动。访问 <http://127.0.0.1:9000/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `9001`、`9002` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。配置保存在 `configs/config.json`，视频默认写入 `recordings/`。
 
 控制台首次打开时根据 `navigator.languages`/`navigator.language` 自动选择中文或英文。页眉中的语言选择器可以手动覆盖并记住选择；切回“自动”会恢复浏览器语言检测。
 
@@ -70,7 +70,7 @@ go run -tags=headless ./cmd/recorder -config /path/to/config.json
 
 ### 摄像头设备
 
-控制台会自动检测可用的内置、外接和虚拟摄像头。将“视频源”改为“摄像头”，从下拉列表选择明确设备后保存。连接或断开摄像头后，可使用列表旁的刷新按钮重新检测。
+控制台会自动检测可用的内置、USB 外接和虚拟摄像头。选择设备后会尽力探测其像素格式、分辨率和帧率，并在存在可用结果时应用明确的推荐模式；具体结果取决于设备、驱动、平台和 FFmpeg 构建。所有建议字段仍可编辑，探测结果不完整或硬件模式特殊时可以手工设置。连接或断开摄像头后，可使用列表旁的刷新按钮重新检测。
 
 | 平台 | 保存的设备 ID 示例 | FFmpeg 输入 |
 | --- | --- | --- |
@@ -78,24 +78,34 @@ go run -tags=headless ./cmd/recorder -config /path/to/config.json
 | macOS | `0` | `avfoundation` |
 | Windows | `@device_pnp_...` | `dshow` |
 
-Linux 通过 `/dev/video*` 检测设备；macOS 和 Windows 使用 FFmpeg 的原生设备列表。Windows 在 FFmpeg 提供 DirectShow alternative name 时保存该稳定标识，控制台仍显示易读的摄像头名称。
+Linux 通过 `/dev/video*` 检测设备；macOS 和 Windows 使用 FFmpeg 的原生设备列表。能力探测始终针对当前选择的设备，因此 macOS 内置摄像头和 USB 外接摄像头可以返回不同参数。Windows 在 FFmpeg 提供 DirectShow alternative name 时保存该稳定标识，控制台仍显示易读的摄像头名称。
 
-保存配置时会持久化所选设备 ID，并且只重启采集子进程，HTTP 服务和控制台保持在线。如果所选设备暂时不可用，服务每 2 秒重试并在状态接口显示最近错误。
+保存配置时会持久化所选设备 ID。仅当视频源、设备、像素格式、分辨率、帧率、JPEG 质量或 FFmpeg 路径等采集参数变化时，FFmpeg 才会重新连接；修改存储和 Web 配置不会重新连接摄像头。如果所选设备暂时不可用，服务每 2 秒重试并在状态接口显示最近错误。
 
 ## API
 
-### 保存并重新采集
+### 录像流程
+
+应用启动后只进行实时预览，不会把帧写入临时存储。明确开始一次录像：
+
+```http
+POST /api/v1/capture/reset
+```
+
+该接口会丢弃尚未保存的当前录像并开始新的录像，但不会重启 FFmpeg 或重新打开摄像头。
+
+保存当前录像：
 
 ```http
 POST /api/v1/record/save?fileName=task_20260728_001
 ```
 
-成功响应表示当前采集内容已进入保存队列并开始了新的采集会话，不表示文件已经写完：
+成功响应表示当前录像已原子加入保存队列。随后停止录像但继续实时预览；如需再次录像，必须重新调用 `POST /api/v1/capture/reset`。响应不表示文件已经写完：
 
 ```json
 {
   "code": 200,
-  "message": "Video export task accepted and capture restarted",
+  "message": "video export task accepted; live preview continues",
   "data": {
     "fileName": "task_20260728_001.mp4",
     "jobId": "1785230534619-000001",
@@ -104,7 +114,7 @@ POST /api/v1/record/save?fileName=task_20260728_001
 }
 ```
 
-`fileName` 不允许目录分隔符、控制字符和 Windows 非法字符。已有文件不会被覆盖：`recording.mp4` 后续会依次保存为 `recording_01.mp4`、`recording_02.mp4`。任务接受后，本次保存的帧不会出现在下一次保存中。缓冲为空返回 `409`，队列已满返回 `503`。
+`fileName` 不允许目录分隔符、控制字符和 Windows 非法字符。已有文件不会被覆盖：`recording.mp4` 后续会依次保存为 `recording_01.mp4`、`recording_02.mp4`。没有活动录像或录像中还没有帧时返回 `409`，队列已满返回 `503`。
 
 ### 查询导出任务
 
@@ -129,18 +139,19 @@ ws://127.0.0.1:<实际端口>/ws/live
 | `GET` | `/` | 跳转到 `/console` |
 | `GET` | `/console` | 本地控制台 |
 | `GET` | `/api/v1/config` | 获取完整配置 |
-| `PUT` | `/api/v1/config` | 校验、持久化并重启采集 |
+| `PUT` | `/api/v1/config` | 校验并持久化；仅采集参数变化时重新连接 |
 | `POST` | `/api/v1/config/reset` | 恢复并持久化默认采集参数 |
 | `GET` | `/api/v1/cameras` | 检测可用摄像头设备 |
+| `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...` | 尽力检测设备的像素格式、分辨率和帧率 |
 | `POST` | `/api/v1/storage/directory/select` | 打开系统存储目录选择框 |
-| `GET` | `/api/v1/status` | 采集、缓冲和预览连接状态 |
-| `POST` | `/api/v1/capture/reset` | 清空缓冲视频并重新开始采集 |
+| `GET` | `/api/v1/status` | 设备、录像、缓冲和预览连接状态 |
+| `POST` | `/api/v1/capture/reset` | 丢弃尚未保存的录像并开始新的录像 |
 
 Console 提供数值形式的服务端口配置。修改端口后需重启应用才会生效，其他采集和存储配置立即生效。自动端口回退仅用于默认端口 `9000`；明确配置的其他端口会严格绑定，不会静默切换。
 
-“已采集时间”表示从应用启动、手动重新采集或上一次保存任务被接受后到当前的时间。“保存并重新采集”会将当前帧加入保存队列，清空下一采集会话、重置开始时间水印并重启 FFmpeg；手动“重新采集”则直接丢弃当前帧而不保存。实时预览和导出视频的右上角都会显示开始采集时间和当前时间。
+控制台状态包括“设备不可用”“重连中”“实时预览”“录制中”和“超时停止录制”。“已录制时间”和“已录制帧数”只统计当前活动录像。“新的录制”会先清除当前内存批次和临时文件，再开始录像；“保存”在录像加入队列后停止录像，但 FFmpeg 和实时预览保持运行。达到配置的最长时长后会停止录像，并删除所有尚未保存的内存和临时文件数据；默认时长为 60 分钟。当 FFmpeg 包含 `drawtext` 时，实时预览和导出视频的右上角仅显示当前时间。
 
-控制台通过操作系统目录选择框选择视频存储目录，并随其他配置保存系统返回的绝对路径。文件默认按天存放在 `yyyyMMdd` 子目录中，也可以选择按月存放到 `yyyyMM` 子目录或不分类。Linux 桌面环境的目录选择框需要安装 Zenity 或 KDialog；headless 环境可直接在 JSON 配置中设置 `storage.directory` 和 `storage.organization`。“重置配置”只恢复帧率、宽度、高度、缓冲时长和 JPEG 质量，其他设置和当前缓冲的视频保持不变。
+控制台通过操作系统目录选择框选择视频存储目录，并随其他配置保存系统返回的绝对路径。文件默认按天存放在 `yyyyMMdd` 子目录中，也可以选择按月存放到 `yyyyMM` 子目录或不分类。Linux 桌面环境的目录选择框需要安装 Zenity 或 KDialog；headless 环境可直接在 JSON 配置中设置 `storage.directory` 和 `storage.organization`。“重置配置”只恢复帧率、宽度、高度、内存缓冲时长和 JPEG 质量，其他设置和当前活动录像保持不变。
 
 ### Origin 白名单
 
@@ -168,12 +179,16 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
   "capture": {
     "source": "mock",
     "device": "",
+    "pixelFormat": "",
     "width": 1280,
     "height": 720,
-    "fps": 26,
+    "fps": 30,
     "jpegQuality": 5,
     "bufferSeconds": 30,
     "ffmpegPath": "ffmpeg"
+  },
+  "recording": {
+    "maxDurationMinutes": 60
   },
   "storage": {
     "directory": "recordings",
@@ -185,7 +200,9 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 }
 ```
 
-`jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。RingBuffer 以内存保存压缩 JPEG；分辨率、帧率、画面复杂度和缓冲时长都会影响内存占用。
+`jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。`bufferSeconds` 控制已录制 JPEG 帧在应用内存中累计多久后，批量追加一次到临时录像文件；它不限制最终保存视频的时长。默认 30 秒因此是应用层写入间隔，不保证磁盘每 30 秒物理刷盘：程序不会调用 `fsync`，实际落盘由操作系统控制。保存时会先写出剩余内存批次，再原子移交录像；开始新的录像和自动超时都会清除当前内存批次及对应临时文件。`recording.maxDurationMinutes` 控制该超时时间，默认为 60 分钟。
+
+只有活动录像中的 JPEG 帧会保存在应用专属的系统临时目录中，直到保存、被新录像替换或超时。分辨率、帧率、画面复杂度、内存缓冲时长和已录制时间会影响内存及临时磁盘占用；正常退出时会删除当前临时目录。
 
 `storage.organization` 可设为 `day`、`month` 或 `none`。例如存储目录为 `recordings` 时，文件将分别写入 `recordings/20260729`、`recordings/202607` 或直接写入 `recordings`。
 
@@ -252,7 +269,7 @@ video-recorder/
 ├── configs/             # 默认持久化配置
 ├── internal/api/        # HTTP 与 WebSocket
 ├── internal/config/     # 配置校验和原子存储
-├── internal/service/    # 采集、RingBuffer、预览和导出
+├── internal/service/    # 采集片段、预览和导出
 ├── internal/tray/       # 桌面与 headless 托盘适配
 ├── pkg/logger/          # 结构化日志
 ├── web/                 # 嵌入二进制的控制台

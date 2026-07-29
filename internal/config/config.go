@@ -15,10 +15,11 @@ import (
 )
 
 type Config struct {
-	Server  ServerConfig  `json:"server"`
-	Capture CaptureConfig `json:"capture"`
-	Storage StorageConfig `json:"storage"`
-	Export  ExportConfig  `json:"export"`
+	Server    ServerConfig    `json:"server"`
+	Capture   CaptureConfig   `json:"capture"`
+	Recording RecordingConfig `json:"recording"`
+	Storage   StorageConfig   `json:"storage"`
+	Export    ExportConfig    `json:"export"`
 }
 
 type ServerConfig struct {
@@ -29,6 +30,7 @@ type ServerConfig struct {
 type CaptureConfig struct {
 	Source        string `json:"source"`
 	Device        string `json:"device"`
+	PixelFormat   string `json:"pixelFormat"`
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	FPS           int    `json:"fps"`
@@ -40,6 +42,10 @@ type CaptureConfig struct {
 type StorageConfig struct {
 	Directory    string `json:"directory"`
 	Organization string `json:"organization"`
+}
+
+type RecordingConfig struct {
+	MaxDurationMinutes int `json:"maxDurationMinutes"`
 }
 
 const (
@@ -58,15 +64,17 @@ func Default() Config {
 		Capture: CaptureConfig{
 			Source:        "mock",
 			Device:        "",
+			PixelFormat:   "",
 			Width:         1280,
 			Height:        720,
-			FPS:           26,
+			FPS:           30,
 			JPEGQuality:   5,
 			BufferSeconds: 30,
 			FFmpegPath:    "ffmpeg",
 		},
-		Storage: StorageConfig{Directory: defaultStorageDirectory(), Organization: StorageOrganizationDay},
-		Export:  ExportConfig{QueueSize: 8},
+		Recording: RecordingConfig{MaxDurationMinutes: 60},
+		Storage:   StorageConfig{Directory: defaultStorageDirectory(), Organization: StorageOrganizationDay},
+		Export:    ExportConfig{QueueSize: 8},
 	}
 }
 
@@ -114,6 +122,9 @@ func (c Config) Validate() error {
 	if c.Capture.Source == "camera" && strings.TrimSpace(c.Capture.Device) == "" {
 		return errors.New("camera device is required")
 	}
+	if c.Capture.Source == "camera" && strings.TrimSpace(c.Capture.PixelFormat) == "" {
+		return errors.New("camera pixel format is required")
+	}
 	if c.Capture.Width < 160 || c.Capture.Width > 7680 || c.Capture.Height < 120 || c.Capture.Height > 4320 {
 		return errors.New("capture resolution is outside the supported range")
 	}
@@ -124,10 +135,13 @@ func (c Config) Validate() error {
 		return errors.New("JPEG quality must be between 2 and 31")
 	}
 	if c.Capture.BufferSeconds < 1 || c.Capture.BufferSeconds > 3600 {
-		return errors.New("buffer duration must be between 1 and 3600 seconds")
+		return errors.New("memory buffer duration must be between 1 and 3600 seconds")
 	}
 	if strings.TrimSpace(c.Capture.FFmpegPath) == "" {
 		return errors.New("ffmpeg path is required")
+	}
+	if c.Recording.MaxDurationMinutes < 1 || c.Recording.MaxDurationMinutes > 10080 {
+		return errors.New("maximum recording duration must be between 1 and 10080 minutes")
 	}
 	if strings.TrimSpace(c.Storage.Directory) == "" {
 		return errors.New("storage directory is required")

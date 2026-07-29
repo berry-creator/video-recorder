@@ -39,12 +39,14 @@ func TestExporterCreatesPlayableMP4(t *testing.T) {
 	cfg.Capture.FPS = 10
 	cfg.Storage.Directory = directory
 	cfg.Storage.Organization = config.StorageOrganizationNone
-	ring := NewRingBuffer(10 * time.Second)
+	buffer := newTestCaptureBuffer(t)
 	base := time.Now()
 	for i := 0; i < 12; i++ {
-		ring.Append(Frame{CapturedAt: base.Add(time.Duration(i) * 100 * time.Millisecond), Data: testJPEG(t, uint8(i*15))})
+		if err := buffer.Append(Frame{CapturedAt: base.Add(time.Duration(i) * 100 * time.Millisecond), Data: testJPEG(t, uint8(i*15))}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	exporter := NewExporter(ring, func() config.Config { return cfg }, discardLogger())
+	exporter := NewExporter(buffer, func() config.Config { return cfg }, discardLogger())
 	defer exporter.Close()
 	status, err := exporter.Enqueue("integration")
 	if err != nil {
@@ -96,7 +98,7 @@ func discardLogger() *slog.Logger {
 func TestExporterRejectsEmptyBuffer(t *testing.T) {
 	cfg := config.Default()
 	cfg.Storage.Directory = t.TempDir()
-	exporter := NewExporter(NewRingBuffer(time.Second), func() config.Config { return cfg }, discardLogger())
+	exporter := NewExporter(newTestCaptureBuffer(t), func() config.Config { return cfg }, discardLogger())
 	defer exporter.Close()
 	if _, err := exporter.Enqueue("empty"); err != ErrNoFrames {
 		t.Fatalf("Enqueue() error = %v, want ErrNoFrames", err)
@@ -114,9 +116,11 @@ func TestExporterAppendsSequenceToDuplicateFileName(t *testing.T) {
 	cfg.Capture.FFmpegPath = filepath.Join(directory, "missing-ffmpeg")
 	cfg.Storage.Directory = directory
 	cfg.Storage.Organization = config.StorageOrganizationNone
-	ring := NewRingBuffer(time.Second)
-	ring.Append(Frame{CapturedAt: time.Now(), Data: testJPEG(t, 1)})
-	exporter := NewExporter(ring, func() config.Config { return cfg }, discardLogger())
+	buffer := newTestCaptureBuffer(t)
+	if err := buffer.Append(Frame{CapturedAt: time.Now(), Data: testJPEG(t, 1)}); err != nil {
+		t.Fatal(err)
+	}
+	exporter := NewExporter(buffer, func() config.Config { return cfg }, discardLogger())
 	defer exporter.Close()
 	status, err := exporter.Enqueue("recording.mp4")
 	if err != nil {

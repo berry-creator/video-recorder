@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -19,7 +18,7 @@ import (
 )
 
 var (
-	ErrNoFrames  = errors.New("the video buffer is empty")
+	ErrNoFrames  = errors.New("the current recording is empty")
 	ErrQueueFull = errors.New("the export queue is full")
 )
 
@@ -45,7 +44,7 @@ type ExportStatus struct {
 
 type exportJob struct {
 	status     ExportStatus
-	frames     []Frame
+	segment    captureSegment
 	targetPath string
 	tempPath   string
 	ffmpegPath string
@@ -53,7 +52,7 @@ type exportJob struct {
 }
 
 type Exporter struct {
-	ring      *RingBuffer
+	buffer    *CaptureBuffer
 	config    func() config.Config
 	log       *slog.Logger
 	queue     chan *exportJob
@@ -68,9 +67,9 @@ type Exporter struct {
 	closed      bool
 }
 
-func NewExporter(ring *RingBuffer, configProvider func() config.Config, logger *slog.Logger) *Exporter {
+func NewExporter(buffer *CaptureBuffer, configProvider func() config.Config, logger *slog.Logger) *Exporter {
 	e := &Exporter{
-		ring:        ring,
+		buffer:      buffer,
 		config:      configProvider,
 		log:         logger,
 		queue:       make(chan *exportJob, 100),
@@ -86,10 +85,6 @@ func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
 	base, err := normalizeFileName(name)
 	if err != nil {
 		return ExportStatus{}, err
-	}
-	frames := e.ring.Snapshot()
-	if len(frames) == 0 {
-		return ExportStatus{}, ErrNoFrames
 	}
 	cfg := e.config()
 	directory, err := organizedStorageDirectory(cfg.Storage, time.Now())
@@ -113,6 +108,11 @@ func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
 		e.mu.Unlock()
 		return ExportStatus{}, err
 	}
+	segment, err := e.buffer.Detach()
+	if err != nil {
+		e.mu.Unlock()
+		return ExportStatus{}, err
+	}
 	nameKey := strings.ToLower(target)
 	e.sequence++
 	id := fmt.Sprintf("%d-%06d", time.Now().UnixMilli(), e.sequence)
@@ -120,12 +120,12 @@ func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
 		ID:         id,
 		FileName:   fileName,
 		State:      ExportQueued,
-		FrameCount: len(frames),
-		CreatedAt:  time.Now(),
+		FrameCount: segment.frames,
+		CreatedAt:  segment.detachedAt,
 	}
 	job := &exportJob{
 		status:     status,
-		frames:     frames,
+		segment:    segment,
 		targetPath: target,
 		tempPath:   filepath.Join(directory, "."+selectedBase+"-"+id+".part.mp4"),
 		ffmpegPath: cfg.Capture.FFmpegPath,
@@ -135,17 +135,9 @@ func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
 	e.activeNames[nameKey] = struct{}{}
 	e.pending++
 	e.pruneJobsLocked()
-	select {
-	case e.queue <- job:
-		e.mu.Unlock()
-		return status, nil
-	default:
-		delete(e.jobs, id)
-		delete(e.activeNames, nameKey)
-		e.pending--
-		e.mu.Unlock()
-		return ExportStatus{}, ErrQueueFull
-	}
+	e.queue <- job
+	e.mu.Unlock()
+	return status, nil
 }
 
 func organizedStorageDirectory(storage config.StorageConfig, now time.Time) (string, error) {
@@ -212,21 +204,28 @@ func (e *Exporter) run() {
 			e.finish(job, ExportFailed, err)
 			continue
 		}
-		e.log.Info("video export completed", "file", job.status.FileName, "frames", len(job.frames))
+		e.log.Info("video export completed", "file", job.status.FileName, "frames", job.segment.frames)
 		e.finish(job, ExportCompleted, nil)
 	}
 }
 
 func (e *Exporter) export(job *exportJob) error {
-	timeout := time.Duration(len(job.frames)/max(job.fps, 1))*time.Second + 30*time.Second
+	timeout := time.Duration(job.segment.frames/max(job.fps, 1))*time.Second + 30*time.Second
 	if timeout < 45*time.Second {
 		timeout = 45 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	defer func() { _ = os.Remove(job.tempPath) }()
+	defer func() {
+		_ = os.Remove(job.tempPath)
+		_ = os.Remove(job.segment.path)
+	}()
 
-	reader := &frameReader{frames: job.frames}
+	reader, err := os.Open(job.segment.path)
+	if err != nil {
+		return fmt.Errorf("open captured segment: %w", err)
+	}
+	defer reader.Close()
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
 		"-f", "image2pipe", "-framerate", strconv.Itoa(job.fps), "-vcodec", "mjpeg", "-i", "pipe:0",
@@ -318,27 +317,6 @@ func normalizeFileName(name string) (string, error) {
 		}
 	}
 	return name, nil
-}
-
-type frameReader struct {
-	frames []Frame
-	index  int
-	offset int
-}
-
-func (r *frameReader) Read(p []byte) (int, error) {
-	for r.index < len(r.frames) {
-		data := r.frames[r.index].Data
-		if r.offset >= len(data) {
-			r.index++
-			r.offset = 0
-			continue
-		}
-		n := copy(p, data[r.offset:])
-		r.offset += n
-		return n, nil
-	}
-	return 0, io.EOF
 }
 
 type limitedStringWriter struct {

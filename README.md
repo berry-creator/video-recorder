@@ -6,15 +6,16 @@
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#desktop-build)
 [![DevContainer](https://img.shields.io/badge/DevContainer-Supported-007ACC?style=flat&logo=visualstudiocode)](.devcontainer/devcontainer.json)
 
-A local video capture service. It uses FFmpeg with the selected built-in, external, or virtual camera, stores JPEG frames in an in-memory ring buffer, and provides low-latency WebSocket preview and asynchronous MP4 saving to web applications. Each accepted save starts a fresh capture session so previously saved frames cannot be included again.
+A local video recording service. It uses FFmpeg with the selected built-in, external, or virtual camera and provides a continuous low-latency WebSocket preview. Recording starts only when explicitly requested, spools JPEG frames to temporary storage, and can be saved asynchronously as MP4 without restarting the camera or FFmpeg process.
 
 ## Features
 
 - Camera capture with automatic process recovery
-- Thread-safe, duration-limited in-memory ring buffer
+- Configurable in-memory batching with thread-safe, disk-backed capture segments
+- Explicit recording sessions with a configurable automatic timeout and cleanup
 - Live JPEG preview over WebSocket without backpressure from slow clients
 - Asynchronous H.264 MP4 export with atomic publication after encoding
-- Start/current-time video watermarks shared by live preview and exported files
+- Optional current-time video watermark shared by live preview and exported files
 - Bounded export queue, automatic duplicate-name numbering, and job status tracking
 - English and Chinese configuration console with automatic language selection
 - Native Windows, macOS, and Linux tray with system-language Chinese/English menus and an optional headless mode
@@ -30,18 +31,17 @@ A local video capture service. It uses FFmpeg with the selected built-in, extern
 │  │ OS SysTray UI │     │     Camera Video Stream     │  │
 │  └───────────────┘     └──────────────┬──────────────┘  │
 │                                       │                 │
-│                                       ▼                 │
-│                        ┌─────────────────────────────┐  │
-│                        │ In-Memory Video RingBuffer  │  │
-│                        └──────────────┬──────────────┘  │
-│                                       │                 │
 │             ┌─────────────────────────┴───────┐         │
 │             │                                 │         │
 │             ▼                                 ▼         │
-│  ┌────────────────────┐                ┌──────┴──────┐  │
-│  │ WebSocket Service  │                │ Video Slice │  │
-│  │ (Live Web Preview) │                │ Export Task │  │
-│  └──────────┬─────────┘                └──────┬──────┘  │
+│  ┌────────────────────┐      ┌────────────────────────┐ │
+│  │ WebSocket Service  │      │ Active Recording Only  │ │
+│  │ (Live Web Preview) │      │ Memory + Temporary File│ │
+│  └──────────┬─────────┘      └───────────┬────────────┘ │
+│             │                            ▼              │
+│             │                    ┌──────────────┐       │
+│             │                    │ Export Task  │       │
+│             │                    └──────┬───────┘       │
 └─────────────┼─────────────────────────────────┼─────────┘
               │ WebSocket                       │ POST /api/v1/record/save
               ▼                                 │ (with fileName)
@@ -52,13 +52,13 @@ A local video capture service. It uses FFmpeg with the selected built-in, extern
 
 ## Quick Start
 
-Go 1.22+ and FFmpeg 5+ are required. The FFmpeg build must include the `mjpeg` decoder, `libx264` encoder, and `drawtext` filter with FreeType/font support.
+Go 1.22+ and FFmpeg 5+ are required. The FFmpeg build must include the `mjpeg` decoder and `libx264` encoder. When the optional `drawtext` filter is unavailable, capture continues without watermarks and the Console displays a warning.
 
 ```bash
 go run -tags=headless ./cmd/recorder
 ```
 
-The service starts at `127.0.0.1:9000` by default. Open <http://127.0.0.1:9000/> to be redirected to the Console. If that default port is occupied, it tries `9001`, `9002`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 26 FPS, so preview and export work without a camera. Configuration is stored in `configs/config.json`, and videos are written to `recordings/` by default.
+The service starts at `127.0.0.1:9000` by default. Open <http://127.0.0.1:9000/> to be redirected to the Console. If that default port is occupied, it tries `9001`, `9002`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Configuration is stored in `configs/config.json`, and videos are written to `recordings/` by default.
 
 On first load, the console selects English or Chinese from `navigator.languages`/`navigator.language`. The language selector in the header can persist a manual override; selecting Auto restores browser-language detection.
 
@@ -70,7 +70,7 @@ go run -tags=headless ./cmd/recorder -config /path/to/config.json
 
 ### Camera Devices
 
-The console automatically detects available built-in, external, and virtual cameras. Change Video source to Camera, select a specific device from the list, and save the settings. Use the refresh button beside the list after connecting or disconnecting a camera.
+The console automatically detects available built-in, USB, and virtual cameras. Selecting a device probes its pixel formats, resolutions, and frame rates on a best-effort basis and applies a recommended concrete mode when one is available. The exact results depend on the device, driver, platform, and FFmpeg build. Every suggested field remains editable, so incomplete probes and unusual hardware can be configured manually. Use the refresh button beside the list after connecting or disconnecting a camera.
 
 | Platform | Saved device ID example | FFmpeg input |
 | --- | --- | --- |
@@ -78,24 +78,34 @@ The console automatically detects available built-in, external, and virtual came
 | macOS | `0` | `avfoundation` |
 | Windows | `@device_pnp_...` | `dshow` |
 
-Linux detection enumerates `/dev/video*`; macOS and Windows detection use FFmpeg's native device listing. On Windows, the stable DirectShow alternative name is saved when FFmpeg provides one, while the readable camera name remains visible in the console.
+Linux detection enumerates `/dev/video*`; macOS and Windows detection use FFmpeg's native device listing. Capability probing always targets the selected device, so macOS built-in and USB cameras may expose different modes. On Windows, the stable DirectShow alternative name is saved when FFmpeg provides one, while the readable camera name remains visible in the console.
 
-Saving settings persists the selected device ID and restarts only the capture subprocess. The HTTP server and console stay online. If the selected device is unavailable, the service retries every two seconds and exposes the latest error through the status endpoint.
+Saving settings persists the selected device ID. FFmpeg reconnects only when capture parameters such as the source, device, pixel format, resolution, frame rate, JPEG quality, or FFmpeg path change. Storage and web settings do not reconnect the camera. If the selected device is unavailable, the service retries every two seconds and exposes the latest error through the status endpoint.
 
 ## API
 
-### Save and Start a New Capture
+### Recording Workflow
+
+The application starts in live-preview mode and does not write frames to temporary storage. Start a recording explicitly:
+
+```http
+POST /api/v1/capture/reset
+```
+
+This endpoint discards any unsaved active recording and starts a new one. It does not restart FFmpeg or reopen the camera.
+
+Save the active recording:
 
 ```http
 POST /api/v1/record/save?fileName=task_20260728_001
 ```
 
-A successful response means the current capture was queued for saving and a new capture session was started; it does not mean the output file is already complete:
+A successful response means the active recording was atomically queued for saving. Recording then stops while live preview continues; another `POST /api/v1/capture/reset` is required to record again. The response does not mean the output file is already complete:
 
 ```json
 {
   "code": 200,
-  "message": "Video export task accepted and capture restarted",
+  "message": "video export task accepted; live preview continues",
   "data": {
     "fileName": "task_20260728_001.mp4",
     "jobId": "1785230534619-000001",
@@ -104,7 +114,7 @@ A successful response means the current capture was queued for saving and a new 
 }
 ```
 
-`fileName` cannot contain path separators, control characters, or Windows-invalid characters. Existing files are never overwritten: `recording.mp4` is followed by `recording_01.mp4`, `recording_02.mp4`, and so on. Once accepted, the saved frames are excluded from the next save. An empty buffer returns `409`; a full queue returns `503`.
+`fileName` cannot contain path separators, control characters, or Windows-invalid characters. Existing files are never overwritten: `recording.mp4` is followed by `recording_01.mp4`, `recording_02.mp4`, and so on. Saving without an active recording or without recorded frames returns `409`; a full queue returns `503`.
 
 ### Query an Export Job
 
@@ -129,18 +139,19 @@ Each WebSocket binary message contains one complete JPEG image suitable for `cre
 | `GET` | `/` | Redirect to `/console` |
 | `GET` | `/console` | Local management console |
 | `GET` | `/api/v1/config` | Read the complete configuration |
-| `PUT` | `/api/v1/config` | Validate, persist, and restart capture |
+| `PUT` | `/api/v1/config` | Validate and persist; reconnect capture only when capture parameters change |
 | `POST` | `/api/v1/config/reset` | Restore and persist the default capture parameters |
 | `GET` | `/api/v1/cameras` | Detect available camera devices |
+| `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...` | Best-effort detection of pixel formats, resolutions, and frame rates for a device |
 | `POST` | `/api/v1/storage/directory/select` | Open the system storage-directory picker |
-| `GET` | `/api/v1/status` | Capture, buffer, and preview-client status |
-| `POST` | `/api/v1/capture/reset` | Clear buffered video and restart the capture session |
+| `GET` | `/api/v1/status` | Device, recording, buffer, and preview-client status |
+| `POST` | `/api/v1/capture/reset` | Discard any unsaved recording and start a new recording |
 
 The Console exposes the service port as a numeric setting. Port changes take effect after restarting the application; capture and storage settings take effect immediately. Automatic port fallback applies only to the default port `9000`, while an explicitly configured non-default port remains strict.
 
-Captured duration is the elapsed time since startup, Start Over, or the most recent accepted save. Save and Start Over queues the current frames for export, clears them from the next capture session, resets the capture-start watermark, and restarts FFmpeg. The manual Start Over action discards the current frames without saving. Each preview and exported frame contains the capture start time and current time in the upper-right corner.
+The Console reports `Device unavailable`, `Reconnecting`, `Live preview`, `Recording`, or `Recording stopped: time limit`. Recorded duration and frame count apply only to the active recording. `New recording` discards the current in-memory batch and temporary file before starting again. `Save` stops recording after the segment is queued, while FFmpeg and live preview remain active. When the configured duration limit is reached, recording stops and all unsaved memory and temporary-file data is deleted. The default limit is 60 minutes. When FFmpeg provides `drawtext`, each preview and exported frame contains only the current time in the upper-right corner.
 
-The console selects the video storage directory through the operating system's directory picker and saves the returned absolute path with the rest of the configuration. Files are organized by day (`yyyyMMdd`) by default; monthly (`yyyyMM`) and unclassified storage are also available. On Linux desktops the directory picker requires Zenity or KDialog; headless environments can set `storage.directory` and `storage.organization` directly in the JSON configuration. Reset Settings restores only frame rate, width, height, buffer duration, and JPEG quality; other settings and currently buffered video are retained.
+The console selects the video storage directory through the operating system's directory picker and saves the returned absolute path with the rest of the configuration. Files are organized by day (`yyyyMMdd`) by default; monthly (`yyyyMM`) and unclassified storage are also available. On Linux desktops the directory picker requires Zenity or KDialog; headless environments can set `storage.directory` and `storage.organization` directly in the JSON configuration. Reset Settings restores only frame rate, width, height, memory buffer duration, and JPEG quality; other settings and the active recording are retained.
 
 ### Origin Allowlist
 
@@ -168,12 +179,16 @@ An explicit `"*"` permits any website to read the local camera preview and invok
   "capture": {
     "source": "mock",
     "device": "",
+    "pixelFormat": "",
     "width": 1280,
     "height": 720,
-    "fps": 26,
+    "fps": 30,
     "jpegQuality": 5,
     "bufferSeconds": 30,
     "ffmpegPath": "ffmpeg"
+  },
+  "recording": {
+    "maxDurationMinutes": 60
   },
   "storage": {
     "directory": "recordings",
@@ -185,7 +200,9 @@ An explicit `"*"` permits any website to read the local camera preview and invok
 }
 ```
 
-`jpegQuality` uses FFmpeg's quantizer scale: `2` is the highest quality and `31` the lowest. The ring buffer stores compressed JPEG data; resolution, frame rate, scene complexity, and buffer duration all affect memory use.
+`jpegQuality` uses FFmpeg's quantizer scale: `2` is the highest quality and `31` the lowest. `bufferSeconds` controls how long recorded JPEG frames are batched in application memory before one append to the temporary recording file; it does not limit the saved video duration. The default 30 seconds is therefore an application write interval, not a guaranteed physical-disk flush interval: the recorder does not call `fsync`, and the operating system controls physical writeback. Saving flushes the remaining memory batch before atomically detaching the recording. Starting a new recording and automatic timeout both discard the current memory batch and its temporary file. `recording.maxDurationMinutes` controls that timeout and defaults to 60 minutes.
+
+Only frames from an active recording are retained in the application-owned system temporary directory until they are saved, replaced, or timed out. Resolution, frame rate, scene complexity, buffer duration, and elapsed recording time affect memory and temporary disk usage. The active temporary directory is removed during graceful shutdown.
 
 `storage.organization` accepts `day`, `month`, or `none`. For example, a base directory of `recordings` writes to `recordings/20260729`, `recordings/202607`, or directly to `recordings`, respectively.
 
@@ -252,7 +269,7 @@ video-recorder/
 ├── configs/             # Default persisted configuration
 ├── internal/api/        # HTTP and WebSocket transport
 ├── internal/config/     # Validation and atomic config storage
-├── internal/service/    # Capture, ring buffer, preview, and export
+├── internal/service/    # Capture segments, preview, and export
 ├── internal/tray/       # Desktop and headless tray adapters
 ├── pkg/logger/          # Structured logging
 ├── web/                 # Console embedded in the binary

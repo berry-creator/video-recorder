@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,6 +19,22 @@ import (
 type CameraDevice struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+type CameraMode struct {
+	PixelFormat string `json:"pixelFormat"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	FPS         int    `json:"fps"`
+}
+
+type CameraCapabilities struct {
+	Device            string       `json:"device"`
+	PixelFormats      []string     `json:"pixelFormats"`
+	Modes             []CameraMode `json:"modes"`
+	Recommended       CameraMode   `json:"recommended"`
+	DrawtextAvailable bool         `json:"drawtextAvailable"`
+	Warnings          []string     `json:"warnings"`
 }
 
 type cameraCommand func(context.Context, string, ...string) ([]byte, error)
@@ -51,6 +68,238 @@ func (d *CameraDetector) List(ctx context.Context, ffmpegPath string) ([]CameraD
 	default:
 		return nil, fmt.Errorf("camera detection is unsupported on %s", d.platform)
 	}
+}
+
+func (d *CameraDetector) Capabilities(ctx context.Context, ffmpegPath, device, pixelFormat string) (CameraCapabilities, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	capabilities := CameraCapabilities{Device: device, PixelFormats: []string{}, Modes: []CameraMode{}, Warnings: []string{}}
+	filterOutput, filterErr := d.run(ctx, ffmpegPath, "-hide_banner", "-filters")
+	capabilities.DrawtextAvailable = filterErr == nil && hasFFmpegFilter(string(filterOutput), "drawtext")
+	if !capabilities.DrawtextAvailable {
+		capabilities.Warnings = append(capabilities.Warnings, "FFmpeg does not provide drawtext; capture will continue without video watermarks")
+	}
+
+	var probeOutput []byte
+	var probeErr error
+	switch d.platform {
+	case "darwin":
+		formatOutput, formatErr := d.run(ctx, ffmpegPath,
+			"-hide_banner", "-loglevel", "verbose", "-f", "avfoundation",
+			"-pixel_format", "monob", "-i", avFoundationInput(device),
+			"-frames:v", "1", "-f", "null", "-",
+		)
+		capabilities.PixelFormats = parseAVFoundationPixelFormats(string(formatOutput))
+		if formatErr == nil && len(capabilities.PixelFormats) == 0 {
+			capabilities.PixelFormats = append(capabilities.PixelFormats, "monob")
+		}
+		selected := pixelFormat
+		if selected == "" {
+			selected = recommendedPixelFormat(capabilities.PixelFormats)
+		}
+		if selected != "" {
+			probeOutput, probeErr = d.run(ctx, ffmpegPath,
+				"-hide_banner", "-loglevel", "verbose", "-f", "avfoundation",
+				"-pixel_format", selected, "-framerate", "123", "-video_size", "123x123",
+				"-i", avFoundationInput(device),
+				"-frames:v", "1", "-f", "null", "-",
+			)
+			capabilities.Modes = parseAVFoundationModes(string(probeOutput), selected)
+		}
+	case "windows":
+		probeOutput, probeErr = d.run(ctx, ffmpegPath,
+			"-hide_banner", "-list_options", "true", "-f", "dshow", "-i", "video="+device,
+		)
+		capabilities.PixelFormats, capabilities.Modes = parseDirectShowCapabilities(string(probeOutput))
+	case "linux":
+		probeOutput, probeErr = d.run(ctx, ffmpegPath,
+			"-hide_banner", "-f", "v4l2", "-list_formats", "all", "-i", device,
+		)
+		capabilities.PixelFormats, capabilities.Modes = parseV4L2Capabilities(string(probeOutput))
+	default:
+		return CameraCapabilities{}, fmt.Errorf("camera capability detection is unsupported on %s", d.platform)
+	}
+	if err := ctx.Err(); err != nil {
+		return CameraCapabilities{}, fmt.Errorf("camera capability detection: %w", err)
+	}
+	if len(capabilities.PixelFormats) == 0 && len(capabilities.Modes) == 0 && probeErr != nil {
+		return CameraCapabilities{}, fmt.Errorf("detect camera capabilities: %w", probeErr)
+	}
+	if len(capabilities.PixelFormats) == 0 {
+		for _, mode := range capabilities.Modes {
+			capabilities.PixelFormats = appendUniqueString(capabilities.PixelFormats, mode.PixelFormat)
+		}
+	}
+	recommendedFormat := pixelFormat
+	if recommendedFormat == "" {
+		recommendedFormat = recommendedPixelFormat(capabilities.PixelFormats)
+	}
+	capabilities.Recommended = recommendCameraMode(recommendedFormat, capabilities.PixelFormats, capabilities.Modes)
+	return capabilities, nil
+}
+
+func avFoundationInput(device string) string {
+	if strings.Contains(device, ":") {
+		return device
+	}
+	return device + ":none"
+}
+
+func hasFFmpegFilter(output, name string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func parseAVFoundationPixelFormats(output string) []string {
+	formats := []string{}
+	inFormats := false
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "Supported pixel formats:") {
+			inFormats = true
+			continue
+		}
+		if !inFormats {
+			continue
+		}
+		value := ffmpegLogValue(line)
+		if !simpleFormatPattern.MatchString(value) {
+			if len(formats) > 0 {
+				break
+			}
+			continue
+		}
+		formats = appendUniqueString(formats, value)
+	}
+	return formats
+}
+
+func parseAVFoundationModes(output, pixelFormat string) []CameraMode {
+	modes := []CameraMode{}
+	for _, match := range avFoundationModePattern.FindAllStringSubmatch(output, -1) {
+		width, _ := strconv.Atoi(match[1])
+		height, _ := strconv.Atoi(match[2])
+		maximum, _ := strconv.ParseFloat(match[4], 64)
+		modes = appendUniqueMode(modes, CameraMode{PixelFormat: pixelFormat, Width: width, Height: height, FPS: int(maximum + 0.5)})
+	}
+	return modes
+}
+
+func parseDirectShowCapabilities(output string) ([]string, []CameraMode) {
+	formats := []string{}
+	modes := []CameraMode{}
+	for _, line := range strings.Split(output, "\n") {
+		match := directShowModePattern.FindStringSubmatch(line)
+		if len(match) != 8 {
+			continue
+		}
+		format := match[1]
+		minWidth, _ := strconv.Atoi(match[2])
+		minHeight, _ := strconv.Atoi(match[3])
+		maxWidth, _ := strconv.Atoi(match[5])
+		maxHeight, _ := strconv.Atoi(match[6])
+		maxFPS, _ := strconv.ParseFloat(match[7], 64)
+		formats = appendUniqueString(formats, format)
+		modes = appendUniqueMode(modes, CameraMode{PixelFormat: format, Width: minWidth, Height: minHeight, FPS: int(maxFPS + 0.5)})
+		modes = appendUniqueMode(modes, CameraMode{PixelFormat: format, Width: maxWidth, Height: maxHeight, FPS: int(maxFPS + 0.5)})
+	}
+	return formats, modes
+}
+
+func parseV4L2Capabilities(output string) ([]string, []CameraMode) {
+	formats := []string{}
+	modes := []CameraMode{}
+	for _, line := range strings.Split(output, "\n") {
+		match := v4l2RawFormatPattern.FindStringSubmatch(line)
+		if len(match) != 3 {
+			continue
+		}
+		format := strings.ToLower(match[1])
+		formats = appendUniqueString(formats, format)
+		for _, size := range resolutionPattern.FindAllStringSubmatch(match[2], -1) {
+			width, _ := strconv.Atoi(size[1])
+			height, _ := strconv.Atoi(size[2])
+			modes = appendUniqueMode(modes, CameraMode{PixelFormat: format, Width: width, Height: height})
+		}
+	}
+	return formats, modes
+}
+
+func recommendCameraMode(format string, formats []string, modes []CameraMode) CameraMode {
+	if format == "" {
+		format = recommendedPixelFormat(formats)
+	}
+	best := CameraMode{PixelFormat: format}
+	bestScore := int(^uint(0) >> 1)
+	for _, mode := range modes {
+		if format != "" && mode.PixelFormat != format {
+			continue
+		}
+		score := absInt(mode.Width-1280)*2 + absInt(mode.Height-720)*3 + absInt(mode.FPS-30)*20
+		if mode.FPS == 0 {
+			score += 1000
+		}
+		if score < bestScore {
+			best, bestScore = mode, score
+		}
+	}
+	return best
+}
+
+func recommendedPixelFormat(formats []string) string {
+	for _, preferred := range []string{"nv12", "yuyv422", "uyvy422", "bgr0", "0rgb"} {
+		if containsString(formats, preferred) {
+			return preferred
+		}
+	}
+	if len(formats) > 0 {
+		return formats[0]
+	}
+	return ""
+}
+
+func ffmpegLogValue(line string) string {
+	if index := strings.LastIndex(line, "] "); index >= 0 {
+		return strings.TrimSpace(line[index+2:])
+	}
+	return strings.TrimSpace(line)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueString(values []string, value string) []string {
+	if value == "" || containsString(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func appendUniqueMode(modes []CameraMode, mode CameraMode) []CameraMode {
+	for _, current := range modes {
+		if current == mode {
+			return modes
+		}
+	}
+	return append(modes, mode)
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func (d *CameraDetector) listLinux() ([]CameraDevice, error) {
@@ -110,6 +359,11 @@ var (
 	avFoundationDevicePattern = regexp.MustCompile(`\]\s+\[(\d+)\]\s+(.+?)\s*$`)
 	directShowVideoPattern    = regexp.MustCompile(`^\[[^]]+\]\s+"(.*)"\s+\(video\)\s*$`)
 	directShowAltPattern      = regexp.MustCompile(`^\[[^]]+\]\s+Alternative name "(.*)"\s*$`)
+	simpleFormatPattern       = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+	avFoundationModePattern   = regexp.MustCompile(`(\d+)x(\d+)@\[([0-9.]+)\s+([0-9.]+)\]fps`)
+	directShowModePattern     = regexp.MustCompile(`pixel_format=([A-Za-z0-9_]+).*min s=(\d+)x(\d+) fps=([0-9.]+) max s=(\d+)x(\d+) fps=([0-9.]+)`)
+	v4l2RawFormatPattern      = regexp.MustCompile(`(?i)Raw\s*:\s*([A-Za-z0-9_]+)\s*:.*:\s*(.+)$`)
+	resolutionPattern         = regexp.MustCompile(`(\d+)x(\d+)`)
 )
 
 func parseAVFoundationDevices(output string) []CameraDevice {

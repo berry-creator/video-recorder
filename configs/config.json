@@ -6,12 +6,16 @@
   "capture": {
     "source": "mock",
     "device": "",
+    "pixelFormat": "",
     "width": 1280,
     "height": 720,
-    "fps": 26,
+    "fps": 30,
     "jpegQuality": 5,
     "bufferSeconds": 30,
     "ffmpegPath": "ffmpeg"
+  },
+  "recording": {
+    "maxDurationMinutes": 60
   },
   "storage": {
     "directory": "recordings",

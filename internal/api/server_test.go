@@ -19,17 +19,20 @@ import (
 )
 
 type testServer struct {
-	server   *httptest.Server
-	api      *Server
-	exporter *service.Exporter
-	cancel   context.CancelFunc
-	capture  *service.CaptureService
-	hub      *service.FrameHub
+	server    *httptest.Server
+	api       *Server
+	exporter  *service.Exporter
+	cancel    context.CancelFunc
+	capture   *service.CaptureService
+	hub       *service.FrameHub
+	buffer    *service.CaptureBuffer
+	recording *service.RecordingSession
 }
 
 type fakeCameraLister struct {
-	devices []service.CameraDevice
-	err     error
+	devices      []service.CameraDevice
+	capabilities service.CameraCapabilities
+	err          error
 }
 
 type fakeDirectorySelector struct {
@@ -39,6 +42,10 @@ type fakeDirectorySelector struct {
 
 func (f fakeCameraLister) List(context.Context, string) ([]service.CameraDevice, error) {
 	return f.devices, f.err
+}
+
+func (f fakeCameraLister) Capabilities(context.Context, string, string, string) (service.CameraCapabilities, error) {
+	return f.capabilities, f.err
 }
 
 func (f fakeDirectorySelector) Select(context.Context, string) (string, error) {
@@ -58,26 +65,35 @@ func newTestServer(t *testing.T) *testServer {
 	if err := store.Update(cfg); err != nil {
 		t.Fatal(err)
 	}
-	ring := service.NewRingBuffer(time.Second)
+	buffer, err := service.NewCaptureBuffer(time.Duration(cfg.Capture.BufferSeconds) * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recording, err := service.NewRecordingSession(buffer, time.Duration(cfg.Recording.MaxDurationMinutes)*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
 	hub := service.NewFrameHub()
-	capture := service.NewCaptureService(ring, hub, logger)
+	capture := service.NewCaptureService(recording, hub, logger)
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := capture.Start(ctx, cfg.Capture); err != nil {
 		t.Fatal(err)
 	}
-	exporter := service.NewExporter(ring, store.Get, logger)
-	apiServer := NewServer(store, capture, ring, hub, exporter, logger)
+	exporter := service.NewExporter(buffer, store.Get, logger)
+	apiServer := NewServer(store, capture, recording, buffer, hub, exporter, logger)
 	apiServer.cameras = fakeCameraLister{devices: []service.CameraDevice{}}
 	apiServer.directory = fakeDirectorySelector{directory: cfg.Storage.Directory}
 	handler := apiServer.Handler()
-	return &testServer{server: httptest.NewServer(handler), api: apiServer, exporter: exporter, cancel: cancel, capture: capture, hub: hub}
+	return &testServer{server: httptest.NewServer(handler), api: apiServer, exporter: exporter, cancel: cancel, capture: capture, hub: hub, buffer: buffer, recording: recording}
 }
 
 func (s *testServer) close() {
 	s.server.Close()
 	s.cancel()
 	s.capture.Stop()
+	s.recording.Close()
 	s.exporter.Close()
+	_ = s.buffer.Close()
 }
 
 func TestConsolePageAndStatus(t *testing.T) {
@@ -102,10 +118,10 @@ func TestConsolePageAndStatus(t *testing.T) {
 	page, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	pageText := string(page)
-	if response.StatusCode != http.StatusOK || !strings.Contains(pageText, "采集控制台") {
+	if response.StatusCode != http.StatusOK || !strings.Contains(pageText, "录像控制台") {
 		t.Fatalf("console page status = %d, body = %q", response.StatusCode, page)
 	}
-	for _, expected := range []string{"Capture Console", "navigator.languages", "videoRecorderLanguage", "保存并重新采集", "Save and start over", `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
+	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="pixelFormat"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
 		if !strings.Contains(pageText, expected) {
 			t.Errorf("console page does not contain bilingual UI marker %q", expected)
 		}
@@ -141,10 +157,11 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	next.Capture.FPS = 12
 	next.Capture.Width = 640
 	next.Capture.Height = 480
-	next.Capture.BufferSeconds = 15
 	next.Capture.JPEGQuality = 12
+	next.Capture.BufferSeconds = 15
 	next.Capture.Source = "camera"
 	next.Capture.Device = "/dev/video-test"
+	next.Capture.PixelFormat = "nv12"
 	next.Capture.FFmpegPath = "/custom/ffmpeg"
 	next.Server.Address = "127.0.0.1:9123"
 	next.Server.AllowedOrigins = []string{"https://app.example.com"}
@@ -153,7 +170,9 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	if err := ts.api.config.Update(next); err != nil {
 		t.Fatal(err)
 	}
-	ts.api.ring.Append(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")})
+	if err := ts.buffer.Append(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")}); err != nil {
+		t.Fatal(err)
+	}
 
 	response, err := http.Post(ts.server.URL+"/api/v1/config/reset", "application/json", nil)
 	if err != nil {
@@ -166,15 +185,15 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	frames, _, _, _ := ts.api.ring.Stats()
+	frames := ts.buffer.Stats().Frames
 	defaults := config.Default()
-	if response.StatusCode != http.StatusOK || body.Data.Capture.FPS != defaults.Capture.FPS || body.Data.Capture.Width != defaults.Capture.Width || body.Data.Capture.Height != defaults.Capture.Height || body.Data.Capture.BufferSeconds != defaults.Capture.BufferSeconds || body.Data.Capture.JPEGQuality != defaults.Capture.JPEGQuality {
+	if response.StatusCode != http.StatusOK || body.Data.Capture.FPS != defaults.Capture.FPS || body.Data.Capture.Width != defaults.Capture.Width || body.Data.Capture.Height != defaults.Capture.Height || body.Data.Capture.JPEGQuality != defaults.Capture.JPEGQuality || body.Data.Capture.BufferSeconds != defaults.Capture.BufferSeconds {
 		t.Fatalf("reset status = %d, config = %#v", response.StatusCode, body.Data)
 	}
 	if body.Data.Storage.Organization != config.StorageOrganizationMonth {
 		t.Fatalf("reset changed storage organization to %q, want month", body.Data.Storage.Organization)
 	}
-	if body.Data.Capture.Source != next.Capture.Source || body.Data.Capture.Device != next.Capture.Device || body.Data.Capture.FFmpegPath != next.Capture.FFmpegPath || body.Data.Server.Address != next.Server.Address || len(body.Data.Server.AllowedOrigins) != 1 || body.Data.Storage.Directory != next.Storage.Directory || body.Data.Export.QueueSize != next.Export.QueueSize {
+	if body.Data.Capture.Source != next.Capture.Source || body.Data.Capture.Device != next.Capture.Device || body.Data.Capture.PixelFormat != next.Capture.PixelFormat || body.Data.Capture.FFmpegPath != next.Capture.FFmpegPath || body.Data.Server.Address != next.Server.Address || len(body.Data.Server.AllowedOrigins) != 1 || body.Data.Storage.Directory != next.Storage.Directory || body.Data.Export.QueueSize != next.Export.QueueSize {
 		t.Fatalf("reset changed a non-resettable setting: got %#v, before %#v", body.Data, next)
 	}
 	if frames != 1 {
@@ -182,28 +201,74 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	}
 }
 
-func TestResetCaptureClearsBufferedFrames(t *testing.T) {
+func TestMemoryBufferDurationDoesNotRequireCaptureRestart(t *testing.T) {
+	previous := config.Default().Capture
+	next := previous
+	next.BufferSeconds++
+	if captureRequiresRestart(previous, next) {
+		t.Fatal("memory buffer duration change requires a capture restart")
+	}
+	next.FPS++
+	if !captureRequiresRestart(previous, next) {
+		t.Fatal("frame rate change did not require a capture restart")
+	}
+}
+
+func TestApplicationStatePrioritizesDeviceAvailability(t *testing.T) {
+	tests := []struct {
+		name      string
+		capture   service.CaptureStatus
+		recording service.RecordingStatus
+		want      string
+	}{
+		{name: "connecting", capture: service.CaptureStatus{Connecting: true}, recording: service.RecordingStatus{State: service.RecordingActive}, want: "reconnecting"},
+		{name: "failed", capture: service.CaptureStatus{LastError: "camera missing"}, recording: service.RecordingStatus{State: service.RecordingActive}, want: "deviceUnavailable"},
+		{name: "starting", capture: service.CaptureStatus{}, recording: service.RecordingStatus{State: service.RecordingPreviewing}, want: "reconnecting"},
+		{name: "preview", capture: service.CaptureStatus{Running: true}, recording: service.RecordingStatus{State: service.RecordingPreviewing}, want: "previewing"},
+		{name: "recording", capture: service.CaptureStatus{Running: true}, recording: service.RecordingStatus{State: service.RecordingActive}, want: "recording"},
+		{name: "timed out", capture: service.CaptureStatus{Running: true}, recording: service.RecordingStatus{State: service.RecordingTimedOut}, want: "timedOut"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := applicationState(test.capture, test.recording); got != test.want {
+				t.Fatalf("applicationState() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResetCaptureStartsRecordingAndClearsBufferedFrames(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
-	ts.api.ring.Append(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")})
+	if err := ts.buffer.Append(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")}); err != nil {
+		t.Fatal(err)
+	}
 
 	response, err := http.Post(ts.server.URL+"/api/v1/capture/reset", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	frames, size, _, _ := ts.api.ring.Stats()
-	if response.StatusCode != http.StatusOK || frames != 0 || size != 0 {
-		t.Fatalf("reset status = %d, ring stats = (%d, %d)", response.StatusCode, frames, size)
+	stats := ts.buffer.Stats()
+	if response.StatusCode != http.StatusOK || stats.Frames != 0 || stats.Bytes != 0 || ts.recording.Status().State != service.RecordingActive {
+		t.Fatalf("reset status = %d, segment stats = %#v", response.StatusCode, stats)
 	}
 }
 
-func TestStatusReportsTimeSinceCaptureSessionStarted(t *testing.T) {
+func TestStatusReportsOnlyActiveRecordingDuration(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
+	assertStatusDuration(t, ts.server.URL, 0)
+	if err := ts.recording.Start(); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(20 * time.Millisecond)
+	assertStatusDuration(t, ts.server.URL, 10)
+}
 
-	response, err := http.Get(ts.server.URL + "/api/v1/status")
+func assertStatusDuration(t *testing.T, serverURL string, minimum int64) {
+	t.Helper()
+	response, err := http.Get(serverURL + "/api/v1/status")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,8 +283,8 @@ func TestStatusReportsTimeSinceCaptureSessionStarted(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Data.Buffer.DurationMillis < 10 {
-		t.Fatalf("captured duration = %dms, want time elapsed since the session started", body.Data.Buffer.DurationMillis)
+	if body.Data.Buffer.DurationMillis < minimum {
+		t.Fatalf("recorded duration = %dms, want at least %dms", body.Data.Buffer.DurationMillis, minimum)
 	}
 }
 
@@ -290,6 +355,33 @@ func TestCameraDevices(t *testing.T) {
 	}
 }
 
+func TestCameraCapabilities(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.close()
+	ts.api.cameras = fakeCameraLister{capabilities: service.CameraCapabilities{
+		Device:            "0",
+		PixelFormats:      []string{"nv12", "uyvy422"},
+		Modes:             []service.CameraMode{{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30}},
+		Recommended:       service.CameraMode{PixelFormat: "nv12", Width: 1280, Height: 720, FPS: 30},
+		DrawtextAvailable: false,
+	}}
+
+	response, err := http.Get(ts.server.URL + "/api/v1/cameras/capabilities?device=0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		Data service.CameraCapabilities `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || body.Data.Recommended.PixelFormat != "nv12" || body.Data.Recommended.FPS != 30 {
+		t.Fatalf("capabilities status = %d, body = %#v", response.StatusCode, body)
+	}
+}
+
 func TestSaveRejectsEmptyBuffer(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
@@ -303,12 +395,15 @@ func TestSaveRejectsEmptyBuffer(t *testing.T) {
 	}
 }
 
-func TestSaveQueuesCurrentFramesAndStartsNewCapture(t *testing.T) {
+func TestSaveQueuesCurrentRecordingAndReturnsToPreviewWithoutRestartingCapture(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
-	previousStart := ts.capture.Status().StartedAt
-	time.Sleep(time.Millisecond)
-	ts.api.ring.Append(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")})
+	if err := ts.recording.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.recording.Record(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")}); err != nil {
+		t.Fatal(err)
+	}
 
 	response, err := http.Post(ts.server.URL+"/api/v1/record/save?fileName=test", "application/json", nil)
 	if err != nil {
@@ -323,16 +418,15 @@ func TestSaveQueuesCurrentFramesAndStartsNewCapture(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	frames, size, _, _ := ts.api.ring.Stats()
-	currentStart := ts.capture.Status().StartedAt
+	stats := ts.buffer.Stats()
 	if response.StatusCode != http.StatusOK || body.Data.JobID == "" {
 		t.Fatalf("save status = %d, body = %#v", response.StatusCode, body)
 	}
-	if frames != 0 || size != 0 {
-		t.Fatalf("saved frames remain in the next capture: frames=%d size=%d", frames, size)
+	if stats.Frames != 0 || stats.Bytes != 0 {
+		t.Fatalf("saved frames remain in the next segment: %#v", stats)
 	}
-	if !currentStart.After(previousStart) {
-		t.Fatalf("capture start = %v, want after %v", currentStart, previousStart)
+	if ts.recording.Status().State != service.RecordingPreviewing {
+		t.Fatalf("recording state = %q, want previewing", ts.recording.Status().State)
 	}
 	job, ok := ts.exporter.Status(body.Data.JobID)
 	if !ok || job.FrameCount != 1 {

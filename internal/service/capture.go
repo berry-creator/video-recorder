@@ -19,18 +19,22 @@ import (
 
 type CaptureStatus struct {
 	Running     bool      `json:"running"`
+	Connecting  bool      `json:"connecting"`
 	Source      string    `json:"source"`
 	StartedAt   time.Time `json:"startedAt,omitempty"`
 	Frames      uint64    `json:"frames"`
 	LastFrameAt time.Time `json:"lastFrameAt,omitempty"`
 	LastError   string    `json:"lastError,omitempty"`
+	Warning     string    `json:"warning,omitempty"`
 	Restarts    uint64    `json:"restarts"`
 }
 
+const CaptureWarningWatermarkUnavailable = "watermarkUnavailable"
+
 type CaptureService struct {
-	ring *RingBuffer
-	hub  *FrameHub
-	log  *slog.Logger
+	recording *RecordingSession
+	hub       *FrameHub
+	log       *slog.Logger
 
 	restartMu sync.Mutex
 	mu        sync.RWMutex
@@ -38,10 +42,13 @@ type CaptureService struct {
 	cancel    context.CancelFunc
 	done      chan struct{}
 	status    CaptureStatus
+
+	featureMu       sync.Mutex
+	drawtextSupport map[string]bool
 }
 
-func NewCaptureService(ring *RingBuffer, hub *FrameHub, logger *slog.Logger) *CaptureService {
-	return &CaptureService{ring: ring, hub: hub, log: logger}
+func NewCaptureService(recording *RecordingSession, hub *FrameHub, logger *slog.Logger) *CaptureService {
+	return &CaptureService{recording: recording, hub: hub, log: logger, drawtextSupport: make(map[string]bool)}
 }
 
 func (s *CaptureService) Start(ctx context.Context, cfg config.CaptureConfig) error {
@@ -61,23 +68,6 @@ func (s *CaptureService) Reconfigure(cfg config.CaptureConfig) error {
 	defer s.restartMu.Unlock()
 
 	s.stopCurrent()
-	s.ring.SetDuration(time.Duration(cfg.BufferSeconds) * time.Second)
-	return s.startCurrent(cfg)
-}
-
-func (s *CaptureService) Reset(cfg config.CaptureConfig) error {
-	s.restartMu.Lock()
-	defer s.restartMu.Unlock()
-
-	s.stopCurrent()
-	s.ring.SetDuration(time.Duration(cfg.BufferSeconds) * time.Second)
-	s.ring.Clear()
-	s.mu.Lock()
-	s.status.StartedAt = time.Now()
-	s.status.Frames = 0
-	s.status.LastFrameAt = time.Time{}
-	s.status.LastError = ""
-	s.mu.Unlock()
 	return s.startCurrent(cfg)
 }
 
@@ -93,16 +83,14 @@ func (s *CaptureService) startCurrent(cfg config.CaptureConfig) error {
 	s.done = done
 	s.status.Source = cfg.Source
 	s.status.LastError = ""
-	startedAt := s.status.StartedAt
-	if startedAt.IsZero() {
-		startedAt = time.Now()
-		s.status.StartedAt = startedAt
+	if s.status.StartedAt.IsZero() {
+		s.status.StartedAt = time.Now()
 	}
 	s.mu.Unlock()
 
 	go func() {
 		defer close(done)
-		s.run(runCtx, cfg, startedAt)
+		s.run(runCtx, cfg)
 	}()
 	return nil
 }
@@ -114,6 +102,7 @@ func (s *CaptureService) Stop() {
 	s.mu.Lock()
 	s.root = nil
 	s.status.Running = false
+	s.status.Connecting = false
 	s.mu.Unlock()
 }
 
@@ -136,9 +125,11 @@ func (s *CaptureService) Status() CaptureStatus {
 	return s.status
 }
 
-func (s *CaptureService) run(ctx context.Context, cfg config.CaptureConfig, startedAt time.Time) {
+func (s *CaptureService) run(ctx context.Context, cfg config.CaptureConfig) {
 	for {
-		err := s.captureOnce(ctx, cfg, startedAt)
+		s.setConnecting(true)
+		err := s.captureOnce(ctx, cfg)
+		s.setConnecting(false)
 		if ctx.Err() != nil {
 			s.setRunning(false)
 			return
@@ -157,8 +148,16 @@ func (s *CaptureService) run(ctx context.Context, cfg config.CaptureConfig, star
 	}
 }
 
-func (s *CaptureService) captureOnce(ctx context.Context, cfg config.CaptureConfig, startedAt time.Time) error {
-	args, err := captureArgs(cfg, startedAt)
+func (s *CaptureService) captureOnce(ctx context.Context, cfg config.CaptureConfig) error {
+	drawtextAvailable := s.supportsDrawtext(ctx, cfg.FFmpegPath)
+	s.mu.Lock()
+	if drawtextAvailable {
+		s.status.Warning = ""
+	} else {
+		s.status.Warning = CaptureWarningWatermarkUnavailable
+	}
+	s.mu.Unlock()
+	args, err := captureArgs(cfg, drawtextAvailable)
 	if err != nil {
 		return err
 	}
@@ -174,7 +173,11 @@ func (s *CaptureService) captureOnce(ctx context.Context, cfg config.CaptureConf
 		return fmt.Errorf("start ffmpeg: %w", err)
 	}
 	s.log.Info("capture process started", "source", cfg.Source, "device", cfg.Device)
-	s.setRunning(true)
+	s.mu.Lock()
+	s.status.Running = true
+	s.status.Connecting = false
+	s.status.LastError = ""
+	s.mu.Unlock()
 
 	reader := NewMJPEGReader(stdout)
 	var readErr error
@@ -186,8 +189,10 @@ func (s *CaptureService) captureOnce(ctx context.Context, cfg config.CaptureConf
 		}
 		now := time.Now()
 		frame := Frame{CapturedAt: now, Data: data}
-		s.ring.Append(frame)
 		s.hub.Publish(frame)
+		if err := s.recording.Record(frame); err != nil {
+			s.log.Error("recording stopped; live preview continues", "error", err)
+		}
 		s.mu.Lock()
 		s.status.Frames++
 		s.status.LastFrameAt = now
@@ -217,45 +222,72 @@ func (s *CaptureService) setRunning(running bool) {
 	s.mu.Unlock()
 }
 
-func captureArgs(cfg config.CaptureConfig, startedAt time.Time) ([]string, error) {
+func (s *CaptureService) setConnecting(connecting bool) {
+	s.mu.Lock()
+	s.status.Connecting = connecting
+	s.mu.Unlock()
+}
+
+func (s *CaptureService) supportsDrawtext(ctx context.Context, ffmpegPath string) bool {
+	s.featureMu.Lock()
+	if available, ok := s.drawtextSupport[ffmpegPath]; ok {
+		s.featureMu.Unlock()
+		return available
+	}
+	s.featureMu.Unlock()
+
+	cmd := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-filters")
+	configureCommand(cmd)
+	output, err := cmd.CombinedOutput()
+	available := err == nil && hasFFmpegFilter(string(output), "drawtext")
+	s.featureMu.Lock()
+	s.drawtextSupport[ffmpegPath] = available
+	s.featureMu.Unlock()
+	if !available {
+		s.log.Warn("FFmpeg drawtext filter is unavailable; capture will continue without watermarks")
+	}
+	return available
+}
+
+func captureArgs(cfg config.CaptureConfig, includeWatermark bool) ([]string, error) {
 	resolution := strconv.Itoa(cfg.Width) + "x" + strconv.Itoa(cfg.Height)
 	fps := strconv.Itoa(cfg.FPS)
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
 	if cfg.Source == "mock" {
 		args = append(args, "-re", "-f", "lavfi", "-i", "testsrc=size="+resolution+":rate="+fps)
 	} else {
-		switch runtime.GOOS {
-		case "linux":
-			args = append(args, "-f", "v4l2", "-framerate", fps, "-video_size", resolution, "-i", cfg.Device)
-		case "darwin":
-			args = append(args, "-f", "avfoundation", "-framerate", fps, "-video_size", resolution, "-i", cfg.Device)
-		case "windows":
-			args = append(args, "-f", "dshow", "-framerate", fps, "-video_size", resolution, "-i", "video="+cfg.Device)
-		default:
-			return nil, fmt.Errorf("camera capture is unsupported on %s", runtime.GOOS)
+		cameraArgs, err := cameraInputArgs(runtime.GOOS, cfg, resolution, fps)
+		if err != nil {
+			return nil, err
 		}
+		args = append(args, cameraArgs...)
+	}
+	if includeWatermark {
+		args = append(args, "-vf", watermarkFilter())
 	}
 	args = append(args,
-		"-vf", watermarkFilter(startedAt),
 		"-an", "-c:v", "mjpeg", "-q:v", strconv.Itoa(cfg.JPEGQuality),
 		"-f", "image2pipe", "pipe:1",
 	)
 	return args, nil
 }
 
-func watermarkFilter(startedAt time.Time) string {
-	started := escapeDrawtextText(startedAt.Local().Format("2006-01-02 15:04:05"))
-	common := "fontcolor=white:fontsize=max(14\\,h/32):box=1:boxcolor=black@0.58:boxborderw=7:x=w-tw-12"
-	return "drawtext=text='Started\\: " + started + "':" + common + ":y=12," +
-		"drawtext=text='Current\\: %{localtime}':" + common + ":y=12+lh+12"
+func cameraInputArgs(platform string, cfg config.CaptureConfig, resolution, fps string) ([]string, error) {
+	switch platform {
+	case "linux":
+		return []string{"-f", "v4l2", "-input_format", cfg.PixelFormat, "-framerate", fps, "-video_size", resolution, "-i", cfg.Device}, nil
+	case "darwin":
+		return []string{"-f", "avfoundation", "-pixel_format", cfg.PixelFormat, "-framerate", fps, "-video_size", resolution, "-i", avFoundationInput(cfg.Device)}, nil
+	case "windows":
+		return []string{"-f", "dshow", "-pixel_format", cfg.PixelFormat, "-framerate", fps, "-video_size", resolution, "-i", "video=" + cfg.Device}, nil
+	default:
+		return nil, fmt.Errorf("camera capture is unsupported on %s", platform)
+	}
 }
 
-func escapeDrawtextText(value string) string {
-	value = strings.ReplaceAll(value, "\\", "\\\\")
-	value = strings.ReplaceAll(value, "'", "\\'")
-	value = strings.ReplaceAll(value, ":", "\\:")
-	value = strings.ReplaceAll(value, "%", "\\%")
-	return value
+func watermarkFilter() string {
+	common := "fontcolor=white:fontsize=max(14\\,h/32):box=1:boxcolor=black@0.58:boxborderw=7:x=w-tw-12"
+	return "drawtext=text='%{localtime}':" + common + ":y=12"
 }
 
 type tailWriter struct {

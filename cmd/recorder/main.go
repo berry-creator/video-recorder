@@ -45,23 +45,35 @@ func run() error {
 	root, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
-	ring := service.NewRingBuffer(time.Duration(cfg.Capture.BufferSeconds) * time.Second)
+	buffer, err := service.NewCaptureBuffer(time.Duration(cfg.Capture.BufferSeconds) * time.Second)
+	if err != nil {
+		return err
+	}
+	recording, err := service.NewRecordingSession(buffer, time.Duration(cfg.Recording.MaxDurationMinutes)*time.Minute)
+	if err != nil {
+		_ = buffer.Close()
+		return err
+	}
 	hub := service.NewFrameHub()
-	capture := service.NewCaptureService(ring, hub, log)
+	capture := service.NewCaptureService(recording, hub, log)
 	if err := capture.Start(root, cfg.Capture); err != nil {
+		recording.Close()
+		_ = buffer.Close()
 		return fmt.Errorf("start capture service: %w", err)
 	}
-	exporter := service.NewExporter(ring, store.Get, log)
+	exporter := service.NewExporter(buffer, store.Get, log)
 	listener, listenAddress, err := listenWithFallback(cfg.Server.Address, net.Listen)
 	if err != nil {
 		capture.Stop()
+		recording.Close()
 		exporter.Close()
+		_ = buffer.Close()
 		return fmt.Errorf("listen on %s: %w", cfg.Server.Address, err)
 	}
 	if listenAddress != cfg.Server.Address {
 		log.Warn("configured port is occupied; using next available port", "configured", cfg.Server.Address, "listening", listenAddress)
 	}
-	handler := api.NewServer(store, capture, ring, hub, exporter, log).Handler()
+	handler := api.NewServer(store, capture, recording, buffer, hub, exporter, log).Handler()
 	httpServer := &http.Server{
 		Addr:              cfg.Server.Address,
 		Handler:           handler,
@@ -119,7 +131,11 @@ func run() error {
 		_ = httpServer.Shutdown(shutdownCtx)
 		shutdownCancel()
 		capture.Stop()
+		recording.Close()
 		exporter.Close()
+		if err := buffer.Close(); err != nil {
+			log.Error("close capture buffer", "error", err)
+		}
 		trayManager.Quit()
 	}()
 

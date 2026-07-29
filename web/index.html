@@ -58,6 +58,9 @@
     .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     label, .field { display: block; min-width: 0; color: #aeb4bc; font-size: 12px; }
     label.wide, .field.wide { grid-column: 1 / -1; }
+    .field-help { display: block; min-height: 15px; margin-top: 5px; color: #9299a2; font-size: 11px; }
+    .field-help.warning { color: #e6bf68; }
+    .field-help.error { color: #ef8585; }
     input, select { width: 100%; height: 36px; margin-top: 6px; padding: 0 10px; border: 1px solid #3b4046; border-radius: 5px; outline: 0; background: #121416; color: #eef0f2; }
     input:focus, select:focus { border-color: #4f86c6; box-shadow: 0 0 0 2px rgb(79 134 198 / 15%); }
     .control-with-action { display: grid; grid-template-columns: minmax(0, 1fr) 36px; gap: 7px; margin-top: 6px; }
@@ -69,6 +72,7 @@
     .export-band input { margin: 0; }
     .notice { min-height: 20px; grid-column: 1 / -1; color: #9ca3ab; font-size: 12px; }
     .notice.error { color: #ef8585; }
+    .notice.warning { color: #e6bf68; }
     .notice.success { color: #65c99b; }
     @media (max-width: 820px) {
       header { padding: 0 16px; }
@@ -107,7 +111,7 @@
   </header>
   <main>
     <div class="toolbar">
-      <h1 data-i18n="consoleTitle">采集控制台</h1>
+      <h1 data-i18n="consoleTitle">录像控制台</h1>
       <div class="toolbar-actions"><button id="refreshButton" type="button" data-i18n="refreshStatus">刷新状态</button></div>
     </div>
     <div class="layout">
@@ -118,19 +122,19 @@
           <div id="previewEmpty" class="empty" data-i18n="noFrame">暂无画面</div>
         </div>
         <div class="metrics">
-          <div class="metric"><div class="metric-label" data-i18n="captureStatus">采集状态</div><div class="metric-value-row"><div id="captureState" class="metric-value">--</div><button id="resetCaptureButton" class="reset-capture" type="button" data-i18n="resetCapture">重新采集</button></div></div>
-          <div class="metric"><div class="metric-label" data-i18n="capturedDuration">已采集时间</div><div id="capturedDuration" class="metric-value">--</div></div>
-          <div class="metric"><div class="metric-label" data-i18n="bufferedFrames">缓冲帧数</div><div id="bufferFrames" class="metric-value">--</div></div>
-          <div class="metric"><div class="metric-label" data-i18n="memoryUsage">内存占用</div><div id="bufferBytes" class="metric-value">--</div></div>
+          <div class="metric"><div class="metric-label" data-i18n="captureStatus">状态</div><div class="metric-value-row"><div id="captureState" class="metric-value">--</div><button id="resetCaptureButton" class="reset-capture" type="button" data-i18n="resetCapture" disabled>新的录制</button></div></div>
+          <div class="metric"><div class="metric-label" data-i18n="capturedDuration">已录制时间</div><div id="capturedDuration" class="metric-value">--</div></div>
+          <div class="metric"><div class="metric-label" data-i18n="bufferedFrames">已录制帧数</div><div id="bufferFrames" class="metric-value">--</div></div>
+          <div class="metric"><div class="metric-label" data-i18n="memoryUsage">内存缓冲</div><div id="bufferBytes" class="metric-value">--</div></div>
           <div class="metric"><div class="metric-label" data-i18n="previewConnections">预览连接</div><div id="viewers" class="metric-value">--</div></div>
         </div>
       </section>
       <section class="panel">
-        <div class="panel-title"><h2 data-i18n="captureConfig">采集配置</h2><span class="muted" data-i18n="configRestartHint">保存后自动重启采集</span></div>
+        <div class="panel-title"><h2 data-i18n="captureConfig">配置</h2><span class="muted" data-i18n="configRestartHint">硬件参数变化时重新连接摄像头</span></div>
         <form id="configForm">
           <div class="fields">
             <label><span data-i18n="videoSource">视频源</span><select id="source"><option value="mock" data-i18n="mockSource">测试画面</option><option value="camera" data-i18n="cameraSource">摄像头</option></select></label>
-            <label><span data-i18n="frameRate">帧率</span><input id="fps" type="number" min="1" max="120" required></label>
+            <label><span data-i18n="frameRate">帧率</span><input id="fps" type="number" min="1" max="120" list="fpsOptions" required><datalist id="fpsOptions"></datalist></label>
             <div class="field wide">
               <label for="device" data-i18n="cameraDevice">摄像头设备</label>
               <div class="control-with-action">
@@ -138,12 +142,14 @@
                 <button id="refreshCamerasButton" class="icon-button" type="button" title="重新检测摄像头" aria-label="重新检测摄像头" data-i18n-title="refreshCameras" data-i18n-aria="refreshCameras">↻</button>
               </div>
             </div>
+            <label class="wide"><span data-i18n="pixelFormat">输入像素格式</span><input id="pixelFormat" type="text" list="pixelFormatOptions" autocomplete="off"><datalist id="pixelFormatOptions"></datalist><span id="cameraCapabilityMeta" class="field-help"></span></label>
             <label><span data-i18n="serverPort">服务端口</span><input id="serverPort" type="number" min="1" max="65535" required></label>
             <label><span data-i18n="storageOrganization">文件分类</span><select id="storageOrganization"><option value="day" data-i18n="organizationDay">按天</option><option value="month" data-i18n="organizationMonth">按月</option><option value="none" data-i18n="organizationNone">无</option></select></label>
-            <label><span data-i18n="width">宽度</span><input id="width" type="number" min="160" max="7680" required></label>
-            <label><span data-i18n="height">高度</span><input id="height" type="number" min="120" max="4320" required></label>
-            <label><span data-i18n="bufferDuration">缓冲时长（秒）</span><input id="bufferSeconds" type="number" min="1" max="3600" required></label>
+            <label><span data-i18n="width">宽度</span><input id="width" type="number" min="160" max="7680" list="widthOptions" required><datalist id="widthOptions"></datalist></label>
+            <label><span data-i18n="height">高度</span><input id="height" type="number" min="120" max="4320" list="heightOptions" required><datalist id="heightOptions"></datalist></label>
+            <label><span data-i18n="bufferDuration">内存缓冲时长（秒）</span><input id="bufferSeconds" type="number" min="1" max="3600" required></label>
             <label><span data-i18n="jpegQuality">JPEG 质量（2 最佳）</span><input id="jpegQuality" type="number" min="2" max="31" required></label>
+            <label><span data-i18n="maxRecordingDuration">最长录制时长（分钟）</span><input id="maxRecordingMinutes" type="number" min="1" max="10080" required></label>
             <div class="field wide">
               <label for="directory" data-i18n="storageDirectory">视频存储目录</label>
               <div class="control-with-action">
@@ -159,7 +165,7 @@
     </div>
     <section class="export-band">
       <input id="fileName" type="text" maxlength="128" placeholder="导出文件名，例如 task_20260728_001" aria-label="导出文件名" data-i18n-placeholder="filePlaceholder" data-i18n-aria="fileLabel">
-      <button id="exportButton" class="primary" type="button" data-i18n="exportBuffer">保存并重新采集</button>
+      <button id="exportButton" class="primary" type="button" data-i18n="exportBuffer" disabled>保存</button>
       <div id="notice" class="notice"></div>
     </section>
   </main>
@@ -167,41 +173,43 @@
     const $ = (id) => document.getElementById(id);
     const messages = {
       zh: {
-        pageTitle: 'Video Recorder 控制台', languageLabel: '界面语言', languageAuto: '自动', connecting: '正在连接', consoleTitle: '采集控制台',
+        pageTitle: 'Video Recorder 录像控制台', languageLabel: '界面语言', languageAuto: '自动', connecting: '正在连接', consoleTitle: '录像控制台',
         refreshStatus: '刷新状态', livePreview: '实时预览', waitingStream: '等待视频流', noFrame: '暂无画面',
-        captureStatus: '采集状态', capturedDuration: '已采集时间', resetCapture: '重新采集', bufferedFrames: '缓冲帧数', memoryUsage: '内存占用', previewConnections: '预览连接',
-        captureConfig: '采集配置', configRestartHint: '保存后自动重启采集', videoSource: '视频源', mockSource: '测试画面',
-        cameraSource: '摄像头', frameRate: '帧率', serverPort: '服务端口', storageOrganization: '文件分类', organizationDay: '按天', organizationMonth: '按月', organizationNone: '无', cameraDevice: '摄像头设备', refreshCameras: '重新检测摄像头',
+        captureStatus: '状态', capturedDuration: '已录制时间', resetCapture: '新的录制', bufferedFrames: '已录制帧数', memoryUsage: '内存缓冲', previewConnections: '预览连接',
+        captureConfig: '配置', configRestartHint: '硬件参数变化时重新连接摄像头', videoSource: '视频源', mockSource: '测试画面',
+        cameraSource: '摄像头', frameRate: '帧率', serverPort: '服务端口', storageOrganization: '文件分类', organizationDay: '按天', organizationMonth: '按月', organizationNone: '无', cameraDevice: '摄像头设备', refreshCameras: '重新检测摄像头', pixelFormat: '输入像素格式',
         detectingCameras: '正在检测摄像头', noCameras: '未检测到摄像头', unavailableCamera: '{name}（当前不可用）', width: '宽度', height: '高度',
-        bufferDuration: '缓冲时长（秒）', jpegQuality: 'JPEG 质量（2 最佳）', storageDirectory: '视频存储目录', selectDirectory: '选择视频存储目录',
+        bufferDuration: '内存缓冲时长（秒）', jpegQuality: 'JPEG 质量（2 最佳）', maxRecordingDuration: '最长录制时长（分钟）', storageDirectory: '视频存储目录', selectDirectory: '选择视频存储目录',
         allowedOrigins: '允许的 Web 应用 Origin', originsPlaceholder: '例如 https://app.example.com，多个地址用逗号分隔',
         resetConfig: '重置配置', saveConfig: '保存配置', filePlaceholder: '导出文件名，例如 task_20260728_001', fileLabel: '导出文件名',
-        exportBuffer: '保存并重新采集', requestFailed: '请求失败', online: '服务在线', offline: '服务离线',
-        capturing: '采集中', reconnecting: '重连中', live: '实时', previewReconnecting: '正在重连',
-        configSaved: '配置已保存，采集进程正在重新连接。', configSavedRestart: '配置已保存；端口将在重启应用后生效。', missingFileName: '请输入导出文件名。', missingCamera: '请选择一个明确的摄像头设备。',
-        resetCaptureConfirm: '将清空当前已采集的视频并重新开始，是否继续？', captureReset: '已清空当前视频并重新开始采集。', captureResetFailed: '重新采集失败：{message}',
-        resetConfigConfirm: '将帧率、宽度、高度、缓冲时长和 JPEG 质量恢复为默认值，是否继续？', configReset: '采集参数已恢复为默认值。', configResetFailed: '重置配置失败：{message}',
+        exportBuffer: '保存', requestFailed: '请求失败', online: '服务在线', offline: '服务离线',
+        deviceUnavailable: '设备不可用', reconnecting: '重连中', livePreviewState: '实时预览', recordingState: '录制中', timedOutState: '超时停止录制', live: '实时', previewReconnecting: '正在重连',
+        configSaved: '配置已保存。', configSavedRestart: '配置已保存；端口将在重启应用后生效。', missingFileName: '请输入导出文件名。', missingCamera: '请选择一个明确的摄像头设备。', missingPixelFormat: '请选择或手工输入摄像头的像素格式。',
+        detectingCapabilities: '正在检测摄像头支持的参数', capabilitiesDetected: '检测到 {formatCount} 种像素格式、{modeCount} 种采集模式', capabilityDetectionFailed: '参数检测失败，可继续手工设置：{message}', watermarkUnavailable: '当前 FFmpeg 不支持 drawtext，视频将不添加水印。',
+        replaceRecordingConfirm: '将丢弃当前尚未保存的录像并开始新的录制，是否继续？', captureReset: '新的录制已开始。', captureResetFailed: '无法开始新的录制：{message}',
+        resetConfigConfirm: '将帧率、宽度、高度、内存缓冲时长和 JPEG 质量恢复为默认值，是否继续？', configReset: '采集参数已恢复为默认值。', configResetFailed: '重置配置失败：{message}',
         cameraDetectionFailed: '摄像头检测失败：{message}', directorySelectionFailed: '目录选择失败：{message}',
-        taskAccepted: '已开始保存并重新采集：{fileName}', exportComplete: '保存完成：{fileName}', exportFailed: '保存失败',
+        taskAccepted: '已提交保存，当前为实时预览：{fileName}', exportComplete: '保存完成：{fileName}', exportFailed: '保存失败',
         exportProgress: '正在保存 {fileName}（{frameCount} 帧）'
       },
       en: {
-        pageTitle: 'Video Recorder Console', languageLabel: 'Interface language', languageAuto: 'Auto', connecting: 'Connecting', consoleTitle: 'Capture Console',
+        pageTitle: 'Video Recorder Console', languageLabel: 'Interface language', languageAuto: 'Auto', connecting: 'Connecting', consoleTitle: 'Recording Console',
         refreshStatus: 'Refresh status', livePreview: 'Live Preview', waitingStream: 'Waiting for video stream', noFrame: 'No video frame',
-        captureStatus: 'Capture status', capturedDuration: 'Captured duration', resetCapture: 'Start over', bufferedFrames: 'Buffered frames', memoryUsage: 'Memory usage', previewConnections: 'Preview clients',
-        captureConfig: 'Capture Settings', configRestartHint: 'Capture restarts after saving', videoSource: 'Video source', mockSource: 'Test pattern',
-        cameraSource: 'Camera', frameRate: 'Frame rate', serverPort: 'Service port', storageOrganization: 'File organization', organizationDay: 'By day', organizationMonth: 'By month', organizationNone: 'None', cameraDevice: 'Camera device', refreshCameras: 'Detect cameras again',
+        captureStatus: 'Status', capturedDuration: 'Recorded duration', resetCapture: 'New recording', bufferedFrames: 'Recorded frames', memoryUsage: 'Memory buffer', previewConnections: 'Preview clients',
+        captureConfig: 'Capture Settings', configRestartHint: 'Camera reconnects when input parameters change', videoSource: 'Video source', mockSource: 'Test pattern',
+        cameraSource: 'Camera', frameRate: 'Frame rate', serverPort: 'Service port', storageOrganization: 'File organization', organizationDay: 'By day', organizationMonth: 'By month', organizationNone: 'None', cameraDevice: 'Camera device', refreshCameras: 'Detect cameras again', pixelFormat: 'Input pixel format',
         detectingCameras: 'Detecting cameras', noCameras: 'No cameras detected', unavailableCamera: '{name} (currently unavailable)', width: 'Width', height: 'Height',
-        bufferDuration: 'Buffer duration (seconds)', jpegQuality: 'JPEG quality (2 is best)', storageDirectory: 'Video storage directory', selectDirectory: 'Select video storage directory',
+        bufferDuration: 'Memory buffer duration (seconds)', jpegQuality: 'JPEG quality (2 is best)', maxRecordingDuration: 'Maximum recording duration (minutes)', storageDirectory: 'Video storage directory', selectDirectory: 'Select video storage directory',
         allowedOrigins: 'Allowed web application origins', originsPlaceholder: 'For example https://app.example.com; separate multiple origins with commas',
         resetConfig: 'Reset settings', saveConfig: 'Save settings', filePlaceholder: 'Export file name, for example task_20260728_001', fileLabel: 'Export file name',
-        exportBuffer: 'Save and start over', requestFailed: 'Request failed', online: 'Service online', offline: 'Service offline',
-        capturing: 'Capturing', reconnecting: 'Reconnecting', live: 'Live', previewReconnecting: 'Reconnecting',
-        configSaved: 'Settings saved. The capture process is reconnecting.', configSavedRestart: 'Settings saved. The port takes effect after restarting the application.', missingFileName: 'Enter an export file name.', missingCamera: 'Select a specific camera device.',
-        resetCaptureConfirm: 'Clear the currently captured video and start over?', captureReset: 'The current video was cleared and capture restarted.', captureResetFailed: 'Could not restart capture: {message}',
-        resetConfigConfirm: 'Restore frame rate, width, height, buffer duration, and JPEG quality to their defaults?', configReset: 'Capture settings restored to their defaults.', configResetFailed: 'Could not reset settings: {message}',
+        exportBuffer: 'Save', requestFailed: 'Request failed', online: 'Service online', offline: 'Service offline',
+        deviceUnavailable: 'Device unavailable', reconnecting: 'Reconnecting', livePreviewState: 'Live preview', recordingState: 'Recording', timedOutState: 'Recording stopped: time limit', live: 'Live', previewReconnecting: 'Reconnecting',
+        configSaved: 'Settings saved.', configSavedRestart: 'Settings saved. The port takes effect after restarting the application.', missingFileName: 'Enter an export file name.', missingCamera: 'Select a specific camera device.', missingPixelFormat: 'Select or manually enter the camera pixel format.',
+        detectingCapabilities: 'Detecting supported camera parameters', capabilitiesDetected: 'Detected {formatCount} pixel formats and {modeCount} capture modes', capabilityDetectionFailed: 'Detection failed; manual settings remain available: {message}', watermarkUnavailable: 'This FFmpeg build has no drawtext filter. Video will be captured without watermarks.',
+        replaceRecordingConfirm: 'Discard the unsaved recording and start a new one?', captureReset: 'A new recording has started.', captureResetFailed: 'Could not start a new recording: {message}',
+        resetConfigConfirm: 'Restore frame rate, width, height, memory buffer duration, and JPEG quality to their defaults?', configReset: 'Capture settings restored to their defaults.', configResetFailed: 'Could not reset settings: {message}',
         cameraDetectionFailed: 'Camera detection failed: {message}', directorySelectionFailed: 'Directory selection failed: {message}',
-        taskAccepted: 'Saving and capture restarted: {fileName}', exportComplete: 'Save completed: {fileName}', exportFailed: 'Save failed',
+        taskAccepted: 'Save queued; live preview continues: {fileName}', exportComplete: 'Save completed: {fileName}', exportFailed: 'Save failed',
         exportProgress: 'Saving {fileName} ({frameCount} frames)'
       }
     };
@@ -262,6 +270,10 @@
     let socket;
     let reconnectTimer;
     let camerasLoading = false;
+    let capabilityRequest = 0;
+    let lastCaptureWarning = '';
+    let currentState = 'reconnecting';
+    let currentRecordingState = 'previewing';
 
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -315,16 +327,18 @@
       const payload = await api('/api/v1/config');
       config = payload.data;
       $('source').value = config.capture.source;
+      $('pixelFormat').value = config.capture.pixelFormat || '';
       $('width').value = config.capture.width;
       $('height').value = config.capture.height;
       $('fps').value = config.capture.fps;
-      $('serverPort').value = configuredPort(config.server.address);
       $('bufferSeconds').value = config.capture.bufferSeconds;
+      $('serverPort').value = configuredPort(config.server.address);
       $('jpegQuality').value = config.capture.jpegQuality;
+      $('maxRecordingMinutes').value = config.recording.maxDurationMinutes;
       $('directory').value = config.storage.directory;
       $('storageOrganization').value = config.storage.organization;
       $('allowedOrigins').value = config.server.allowedOrigins.join(', ');
-      await loadCameras();
+      await loadCameras(false);
     }
 
     function setConfigButtonsDisabled(disabled) {
@@ -347,7 +361,62 @@
       }
     }
 
-    async function loadCameras() {
+    function setDatalist(id, values) {
+      const unique = [...new Set(values.filter((value) => value !== '' && value !== 0))];
+      $(id).replaceChildren(...unique.map((value) => new Option(String(value))));
+    }
+
+    function setCapabilityMeta(message = '', type = '') {
+      const meta = $('cameraCapabilityMeta');
+      meta.textContent = message;
+      meta.className = `field-help ${type}`;
+    }
+
+    async function loadCameraCapabilities(applyRecommended = false, preservePixelFormat = false) {
+      const device = $('device').value;
+      if ($('source').value !== 'camera' || !device) {
+        setDatalist('pixelFormatOptions', []);
+        setDatalist('widthOptions', []);
+        setDatalist('heightOptions', []);
+        setDatalist('fpsOptions', []);
+        setCapabilityMeta();
+        return;
+      }
+      const request = ++capabilityRequest;
+      setCapabilityMeta(t('detectingCapabilities'));
+      try {
+        const query = new URLSearchParams({device});
+        if (preservePixelFormat && $('pixelFormat').value.trim()) query.set('pixelFormat', $('pixelFormat').value.trim());
+        const payload = await api(`/api/v1/cameras/capabilities?${query}`);
+        if (request !== capabilityRequest) return;
+        const data = payload.data || {};
+        const formats = Array.isArray(data.pixelFormats) ? data.pixelFormats : [];
+        const modes = Array.isArray(data.modes) ? data.modes : [];
+        const recommended = data.recommended || {};
+        setDatalist('pixelFormatOptions', formats);
+        if (applyRecommended && !preservePixelFormat && recommended.pixelFormat) $('pixelFormat').value = recommended.pixelFormat;
+        const selectedFormat = $('pixelFormat').value.trim() || recommended.pixelFormat || '';
+        const matchingModes = modes.filter((mode) => !selectedFormat || mode.pixelFormat === selectedFormat);
+        setDatalist('widthOptions', matchingModes.map((mode) => mode.width));
+        setDatalist('heightOptions', matchingModes.map((mode) => mode.height));
+        setDatalist('fpsOptions', matchingModes.map((mode) => mode.fps));
+        if (applyRecommended) {
+          if (recommended.width) $('width').value = recommended.width;
+          if (recommended.height) $('height').value = recommended.height;
+          if (recommended.fps) $('fps').value = recommended.fps;
+        }
+        if (data.drawtextAvailable === false) {
+          setCapabilityMeta(t('watermarkUnavailable'), 'warning');
+        } else {
+          setCapabilityMeta(t('capabilitiesDetected', {formatCount: formats.length, modeCount: modes.length}));
+        }
+      } catch (error) {
+        if (request !== capabilityRequest) return;
+        setCapabilityMeta(t('capabilityDetectionFailed', {message: error.message}), 'error');
+      }
+    }
+
+    async function loadCameras(applyRecommended = false) {
       const select = $('device');
       const selectedID = select.value || (config && config.capture.device) || '';
       camerasLoading = true;
@@ -380,20 +449,31 @@
         camerasLoading = false;
         updateDeviceState();
       }
+      await loadCameraCapabilities(applyRecommended, !applyRecommended);
     }
 
     async function loadStatus() {
       try {
         const payload = await api('/api/v1/status');
         const data = payload.data;
+        currentState = data.state || 'reconnecting';
+        currentRecordingState = (data.recording && data.recording.state) || 'previewing';
         $('serviceDot').classList.add('online');
         $('serviceText').textContent = t('online');
-        $('captureState').textContent = data.capture.running ? t('capturing') : t('reconnecting');
+        const stateMessages = {deviceUnavailable: 'deviceUnavailable', reconnecting: 'reconnecting', previewing: 'livePreviewState', recording: 'recordingState', timedOut: 'timedOutState'};
+        $('captureState').textContent = t(stateMessages[currentState] || 'deviceUnavailable');
         $('capturedDuration').textContent = friendlyDuration(data.buffer.durationMillis || 0);
         $('bufferFrames').textContent = data.buffer.frames.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US');
-        $('bufferBytes').textContent = bytes(data.buffer.bytes);
+        $('bufferBytes').textContent = bytes(data.buffer.memoryBytes || 0);
         $('viewers').textContent = data.previewClients.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US');
+        $('resetCaptureButton').disabled = currentState === 'deviceUnavailable' || currentState === 'reconnecting';
+        $('exportButton').disabled = currentRecordingState !== 'recording';
         if (data.capture.lastError) showNotice(data.capture.lastError, 'error');
+        if (data.recording && data.recording.lastError) showNotice(data.recording.lastError, 'error');
+        if (data.capture.warning && data.capture.warning !== lastCaptureWarning) {
+          lastCaptureWarning = data.capture.warning;
+          if (data.capture.warning === 'watermarkUnavailable') showNotice(t('watermarkUnavailable'), 'warning');
+        }
       } catch (error) {
         $('serviceDot').classList.remove('online');
         $('serviceText').textContent = t('offline');
@@ -401,22 +481,24 @@
     }
 
     async function resetCapture() {
-      if (!window.confirm(t('resetCaptureConfirm'))) return;
+      if (currentRecordingState === 'recording' && !window.confirm(t('replaceRecordingConfirm'))) return;
       const button = $('resetCaptureButton');
       button.disabled = true;
       try {
         await api('/api/v1/capture/reset', {method: 'POST'});
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        $('previewEmpty').hidden = false;
+        currentRecordingState = 'recording';
+        currentState = 'recording';
         $('capturedDuration').textContent = friendlyDuration(0);
         $('bufferFrames').textContent = '0';
         $('bufferBytes').textContent = bytes(0);
+        $('captureState').textContent = t('recordingState');
+        $('exportButton').disabled = false;
         showNotice(t('captureReset'), 'success');
         await loadStatus();
       } catch (error) {
         showNotice(t('captureResetFailed', {message: error.message}), 'error');
       } finally {
-        button.disabled = false;
+        button.disabled = currentState === 'deviceUnavailable' || currentState === 'reconnecting';
       }
     }
 
@@ -437,6 +519,8 @@
       const camera = $('source').value === 'camera';
       $('device').disabled = !camera || camerasLoading;
       $('device').required = camera;
+      $('pixelFormat').disabled = !camera;
+      $('pixelFormat').required = camera;
       $('refreshCamerasButton').disabled = !camera || camerasLoading;
     }
 
@@ -466,15 +550,20 @@
       };
     }
 
-    $('source').addEventListener('change', updateDeviceState);
-    $('refreshCamerasButton').addEventListener('click', loadCameras);
+    $('source').addEventListener('change', () => {
+      updateDeviceState();
+      loadCameraCapabilities(true, false);
+    });
+    $('device').addEventListener('change', () => loadCameraCapabilities(true, false));
+    $('pixelFormat').addEventListener('change', () => loadCameraCapabilities(true, true));
+    $('refreshCamerasButton').addEventListener('click', () => loadCameras(false));
     $('selectDirectoryButton').addEventListener('click', selectStorageDirectory);
     $('resetCaptureButton').addEventListener('click', resetCapture);
     $('resetConfigButton').addEventListener('click', resetConfig);
     $('languageSelect').addEventListener('change', (event) => {
       applyLanguage(event.target.value, true);
       loadStatus();
-      loadCameras();
+      loadCameras(false);
     });
     $('refreshButton').addEventListener('click', loadStatus);
     $('configForm').addEventListener('submit', async (event) => {
@@ -483,16 +572,22 @@
         showNotice(t('missingCamera'), 'error');
         return;
       }
+      if ($('source').value === 'camera' && !$('pixelFormat').value.trim()) {
+        showNotice(t('missingPixelFormat'), 'error');
+        return;
+      }
       setConfigButtonsDisabled(true);
       const next = structuredClone(config);
       const previousPort = configuredPort(config.server.address);
       next.capture.source = $('source').value;
       next.capture.device = $('device').value;
+      next.capture.pixelFormat = $('pixelFormat').value.trim();
       next.capture.width = Number($('width').value);
       next.capture.height = Number($('height').value);
       next.capture.fps = Number($('fps').value);
       next.capture.bufferSeconds = Number($('bufferSeconds').value);
       next.capture.jpegQuality = Number($('jpegQuality').value);
+      next.recording.maxDurationMinutes = Number($('maxRecordingMinutes').value);
       next.server.address = addressWithPort(config.server.address, Number($('serverPort').value));
       next.storage.directory = $('directory').value.trim();
       next.storage.organization = $('storageOrganization').value;
@@ -515,17 +610,18 @@
       button.disabled = true;
       try {
         const payload = await api(`/api/v1/record/save?fileName=${encodeURIComponent(name)}`, {method: 'POST'});
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        $('previewEmpty').hidden = false;
+        currentRecordingState = 'previewing';
+        currentState = 'previewing';
         $('capturedDuration').textContent = friendlyDuration(0);
         $('bufferFrames').textContent = '0';
         $('bufferBytes').textContent = bytes(0);
+        $('captureState').textContent = t('livePreviewState');
         showNotice(t('taskAccepted', {fileName: payload.data.fileName}), 'success');
         pollJob(payload.data.jobId);
       } catch (error) {
         showNotice(error.message, 'error');
       } finally {
-        button.disabled = false;
+        button.disabled = currentRecordingState !== 'recording';
       }
     });
 

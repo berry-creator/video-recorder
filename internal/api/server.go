@@ -21,7 +21,8 @@ import (
 type Server struct {
 	config    *config.Store
 	capture   *service.CaptureService
-	ring      *service.RingBuffer
+	recording *service.RecordingSession
+	buffer    *service.CaptureBuffer
 	hub       *service.FrameHub
 	exporter  *service.Exporter
 	log       *slog.Logger
@@ -32,17 +33,19 @@ type Server struct {
 
 type cameraLister interface {
 	List(context.Context, string) ([]service.CameraDevice, error)
+	Capabilities(context.Context, string, string, string) (service.CameraCapabilities, error)
 }
 
 type directorySelector interface {
 	Select(context.Context, string) (string, error)
 }
 
-func NewServer(store *config.Store, capture *service.CaptureService, ring *service.RingBuffer, hub *service.FrameHub, exporter *service.Exporter, logger *slog.Logger) *Server {
+func NewServer(store *config.Store, capture *service.CaptureService, recording *service.RecordingSession, buffer *service.CaptureBuffer, hub *service.FrameHub, exporter *service.Exporter, logger *slog.Logger) *Server {
 	server := &Server{
 		config:    store,
 		capture:   capture,
-		ring:      ring,
+		recording: recording,
+		buffer:    buffer,
 		hub:       hub,
 		exporter:  exporter,
 		log:       logger,
@@ -67,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/config", s.updateConfig)
 	mux.HandleFunc("POST /api/v1/config/reset", s.resetConfig)
 	mux.HandleFunc("GET /api/v1/cameras", s.getCameras)
+	mux.HandleFunc("GET /api/v1/cameras/capabilities", s.getCameraCapabilities)
 	mux.HandleFunc("POST /api/v1/storage/directory/select", s.selectStorageDirectory)
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
 	mux.HandleFunc("POST /api/v1/capture/reset", s.resetCapture)
@@ -101,6 +105,26 @@ func (s *Server) getCameras(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "ok", Data: devices})
+}
+
+func (s *Server) getCameraCapabilities(w http.ResponseWriter, r *http.Request) {
+	device := strings.TrimSpace(r.URL.Query().Get("device"))
+	if device == "" {
+		writeError(w, http.StatusBadRequest, "camera device is required")
+		return
+	}
+	capabilities, err := s.cameras.Capabilities(
+		r.Context(),
+		s.config.Get().Capture.FFmpegPath,
+		device,
+		strings.TrimSpace(r.URL.Query().Get("pixelFormat")),
+	)
+	if err != nil {
+		s.log.Warn("camera capability detection failed", "device", device, "error", err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "ok", Data: capabilities})
 }
 
 func (s *Server) middleware(next http.Handler) http.Handler {
@@ -166,54 +190,89 @@ func (s *Server) updateConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid configuration: %v", err))
 		return
 	}
+	previous := s.config.Get()
 	if err := s.config.Update(next); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	stored := s.config.Get()
-	if err := s.capture.Reconfigure(stored.Capture); err != nil {
-		writeError(w, http.StatusInternalServerError, "configuration saved but capture restart failed: "+err.Error())
-		return
+	if previous.Capture.BufferSeconds != stored.Capture.BufferSeconds {
+		if err := s.buffer.SetMemoryDuration(time.Duration(stored.Capture.BufferSeconds) * time.Second); err != nil {
+			writeError(w, http.StatusInternalServerError, "configuration saved but memory buffer update failed: "+err.Error())
+			return
+		}
+	}
+	if previous.Recording.MaxDurationMinutes != stored.Recording.MaxDurationMinutes {
+		if err := s.recording.SetMaxDuration(time.Duration(stored.Recording.MaxDurationMinutes) * time.Minute); err != nil {
+			writeError(w, http.StatusInternalServerError, "configuration saved but recording timeout update failed: "+err.Error())
+			return
+		}
+	}
+	if captureRequiresRestart(previous.Capture, stored.Capture) {
+		if err := s.capture.Reconfigure(stored.Capture); err != nil {
+			writeError(w, http.StatusInternalServerError, "configuration saved but capture restart failed: "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "configuration saved", Data: stored})
 }
 
 func (s *Server) resetConfig(w http.ResponseWriter, _ *http.Request) {
 	next := s.config.Get()
+	previousCapture := next.Capture
 	defaults := config.Default()
 	next.Capture.Width = defaults.Capture.Width
 	next.Capture.Height = defaults.Capture.Height
 	next.Capture.FPS = defaults.Capture.FPS
-	next.Capture.BufferSeconds = defaults.Capture.BufferSeconds
 	next.Capture.JPEGQuality = defaults.Capture.JPEGQuality
+	next.Capture.BufferSeconds = defaults.Capture.BufferSeconds
 	if err := s.config.Update(next); err != nil {
 		writeError(w, http.StatusInternalServerError, "reset configuration: "+err.Error())
 		return
 	}
-	if err := s.capture.Reconfigure(next.Capture); err != nil {
-		writeError(w, http.StatusInternalServerError, "configuration reset but capture restart failed: "+err.Error())
-		return
+	if previousCapture.BufferSeconds != next.Capture.BufferSeconds {
+		if err := s.buffer.SetMemoryDuration(time.Duration(next.Capture.BufferSeconds) * time.Second); err != nil {
+			writeError(w, http.StatusInternalServerError, "configuration reset but memory buffer update failed: "+err.Error())
+			return
+		}
+	}
+	if captureRequiresRestart(previousCapture, next.Capture) {
+		if err := s.capture.Reconfigure(next.Capture); err != nil {
+			writeError(w, http.StatusInternalServerError, "configuration reset but capture restart failed: "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "configuration reset", Data: s.config.Get()})
 }
 
+func captureRequiresRestart(previous, next config.CaptureConfig) bool {
+	previous.BufferSeconds = next.BufferSeconds
+	return previous != next
+}
+
 func (s *Server) getStatus(w http.ResponseWriter, _ *http.Request) {
-	frames, bytes, oldest, newest := s.ring.Stats()
+	stats := s.buffer.Stats()
 	captureStatus := s.capture.Status()
+	recordingStatus := s.recording.Status()
 	capturedDuration := time.Duration(0)
-	if !captureStatus.StartedAt.IsZero() {
-		capturedDuration = time.Since(captureStatus.StartedAt)
+	if recordingStatus.State == service.RecordingActive && !recordingStatus.StartedAt.IsZero() {
+		capturedDuration = time.Since(recordingStatus.StartedAt)
 		if capturedDuration < 0 {
 			capturedDuration = 0
 		}
 	}
+	state := applicationState(captureStatus, recordingStatus)
 	data := map[string]any{
-		"capture": captureStatus,
+		"state":     state,
+		"capture":   captureStatus,
+		"recording": recordingStatus,
 		"buffer": map[string]any{
-			"frames":         frames,
-			"bytes":          bytes,
-			"oldest":         oldest,
-			"newest":         newest,
+			"frames":         stats.Frames,
+			"bytes":          stats.Bytes,
+			"memoryBytes":    stats.MemoryBytes,
+			"diskBytes":      stats.DiskBytes,
+			"oldest":         stats.Oldest,
+			"newest":         stats.Newest,
 			"durationMillis": capturedDuration.Milliseconds(),
 		},
 		"previewClients": s.hub.SubscriberCount(),
@@ -221,18 +280,33 @@ func (s *Server) getStatus(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "ok", Data: data})
 }
 
+func applicationState(capture service.CaptureStatus, recording service.RecordingStatus) string {
+	if capture.Connecting {
+		return "reconnecting"
+	}
+	if !capture.Running {
+		if capture.LastError != "" {
+			return "deviceUnavailable"
+		}
+		return "reconnecting"
+	}
+	return string(recording.State)
+}
+
 func (s *Server) resetCapture(w http.ResponseWriter, _ *http.Request) {
-	if err := s.capture.Reset(s.config.Get().Capture); err != nil {
-		writeError(w, http.StatusInternalServerError, "restart capture: "+err.Error())
+	if err := s.recording.Start(); err != nil {
+		writeError(w, http.StatusInternalServerError, "start new recording: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "capture restarted", Data: s.capture.Status()})
+	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "new recording started", Data: s.recording.Status()})
 }
 
 func (s *Server) saveRecording(w http.ResponseWriter, r *http.Request) {
-	status, err := s.exporter.Enqueue(r.URL.Query().Get("fileName"))
+	status, err := s.recording.Save(s.exporter, r.URL.Query().Get("fileName"))
 	if err != nil {
 		switch {
+		case errors.Is(err, service.ErrRecordingNotActive):
+			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, service.ErrNoFrames):
 			writeError(w, http.StatusConflict, err.Error())
 		case errors.Is(err, service.ErrQueueFull):
@@ -242,13 +316,8 @@ func (s *Server) saveRecording(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := s.capture.Reset(s.config.Get().Capture); err != nil {
-		s.log.Error("video export queued but capture restart failed", "jobId", status.ID, "error", err)
-		writeError(w, http.StatusInternalServerError, "video export queued but capture restart failed: "+err.Error())
-		return
-	}
 	data := map[string]any{"fileName": status.FileName, "jobId": status.ID, "state": status.State}
-	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "Video export task accepted and capture restarted", Data: data})
+	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "video export task accepted; live preview continues", Data: data})
 }
 
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {

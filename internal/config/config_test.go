@@ -15,8 +15,14 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	if store.Get().Capture.Source != "mock" {
 		t.Fatalf("default source = %q, want mock", store.Get().Capture.Source)
 	}
-	if store.Get().Capture.FPS != 26 {
-		t.Fatalf("default FPS = %d, want 26", store.Get().Capture.FPS)
+	if store.Get().Capture.FPS != 30 {
+		t.Fatalf("default FPS = %d, want 30", store.Get().Capture.FPS)
+	}
+	if store.Get().Capture.BufferSeconds != 30 {
+		t.Fatalf("default memory buffer duration = %d, want 30", store.Get().Capture.BufferSeconds)
+	}
+	if store.Get().Recording.MaxDurationMinutes != 60 {
+		t.Fatalf("default maximum recording duration = %d, want 60", store.Get().Recording.MaxDurationMinutes)
 	}
 	if store.Get().Storage.Organization != StorageOrganizationDay {
 		t.Fatalf("default storage organization = %q, want day", store.Get().Storage.Organization)
@@ -37,6 +43,16 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	}
 	if got := reloaded.Get().Capture.FPS; got != 24 {
 		t.Fatalf("persisted FPS = %d, want 24", got)
+	}
+}
+
+func TestInvalidRecordingDurationIsRejected(t *testing.T) {
+	for _, duration := range []int{0, 10081} {
+		cfg := Default()
+		cfg.Recording.MaxDurationMinutes = duration
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("Validate() accepted maximum recording duration %d", duration)
+		}
 	}
 }
 
@@ -84,6 +100,10 @@ func TestCameraSourceRequiresSpecificDevice(t *testing.T) {
 	}
 
 	cfg.Capture.Device = "0"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() accepted a camera source without a pixel format")
+	}
+	cfg.Capture.PixelFormat = "nv12"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() rejected a camera source with a device ID: %v", err)
 	}
