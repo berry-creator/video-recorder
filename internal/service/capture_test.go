@@ -41,6 +41,9 @@ func TestCaptureArgsOmitWatermarkWhenDrawtextIsUnavailable(t *testing.T) {
 	if filter := argumentAfter(args, "-vf"); filter != "" {
 		t.Fatalf("capture filter = %q, want no watermark filter", filter)
 	}
+	if pixelFormat := argumentAfter(args, "-pix_fmt"); pixelFormat != "yuvj420p" {
+		t.Fatalf("capture pixel format = %q, want yuvj420p", pixelFormat)
+	}
 }
 
 func TestCameraInputArgsUseSelectedPixelFormat(t *testing.T) {

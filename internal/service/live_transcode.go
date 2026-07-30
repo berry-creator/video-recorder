@@ -2,9 +2,12 @@ package service
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"log/slog"
 	"os"
@@ -32,6 +35,7 @@ const (
 
 type TranscodeStatus struct {
 	State     TranscodeState `json:"state"`
+	Decoder   string         `json:"decoder,omitempty"`
 	Encoder   string         `json:"encoder,omitempty"`
 	Speed     float64        `json:"speed,omitempty"`
 	LastError string         `json:"lastError,omitempty"`
@@ -60,8 +64,10 @@ type recordingTranscoder interface {
 }
 
 type encoderSpec struct {
-	name string
-	args []string
+	name      string
+	decoder   string
+	inputArgs []string
+	args      []string
 }
 
 type liveSession struct {
@@ -161,9 +167,9 @@ func (t *LiveTranscoder) Start() {
 	}
 	t.active = session
 	t.finalizing = nil
-	t.status = TranscodeStatus{State: TranscodeRunning, Encoder: encoder.name}
+	t.status = TranscodeStatus{State: TranscodeRunning, Decoder: encoder.decoder, Encoder: encoder.name}
 	t.mu.Unlock()
-	t.log.Info("live transcode started", "encoder", encoder.name, "queueFrames", queueSize)
+	t.log.Info("live transcode started", "decoder", encoder.decoder, "encoder", encoder.name, "queueFrames", queueSize)
 }
 
 func (t *LiveTranscoder) Write(frame Frame) {
@@ -265,19 +271,19 @@ func (t *LiveTranscoder) fallbackFor(session *liveSession, message string) {
 	}
 	if t.active == session {
 		t.active = nil
-		t.status = TranscodeStatus{State: TranscodeFallback, Encoder: session.encoder.name, LastError: message}
+		t.status = TranscodeStatus{State: TranscodeFallback, Decoder: session.encoder.decoder, Encoder: session.encoder.name, LastError: message}
 	} else if t.finalizing == session {
-		t.status = TranscodeStatus{State: TranscodeFallback, Encoder: session.encoder.name, LastError: message}
+		t.status = TranscodeStatus{State: TranscodeFallback, Decoder: session.encoder.decoder, Encoder: session.encoder.name, LastError: message}
 		t.finalizing = nil
 	}
 	t.mu.Unlock()
-	t.log.Warn("live transcode stopped; save-time encoding will be used", "encoder", session.encoder.name, "error", message)
+	t.log.Warn("live transcode stopped; save-time encoding will be used", "decoder", session.encoder.decoder, "encoder", session.encoder.name, "error", message)
 }
 
 func (t *LiveTranscoder) completeFor(session *liveSession) {
 	t.mu.Lock()
 	if t.finalizing == session {
-		t.status = TranscodeStatus{State: TranscodeCompleted, Encoder: session.encoder.name, Speed: t.status.Speed}
+		t.status = TranscodeStatus{State: TranscodeCompleted, Decoder: session.encoder.decoder, Encoder: session.encoder.name, Speed: t.status.Speed}
 		t.finalizing = nil
 	}
 	t.mu.Unlock()
@@ -353,31 +359,62 @@ func encoderCandidates(platform, preference string, softwareThreads, videoBitrat
 	softwareArgs := []string{"-c:v", "libx264", "-preset", "veryfast"}
 	softwareArgs = append(softwareArgs, rateArgs...)
 	softwareArgs = append(softwareArgs, "-threads", strconv.Itoa(softwareThreads), "-pix_fmt", "yuv420p")
-	software := encoderSpec{name: "libx264", args: softwareArgs}
+	software := encoderSpec{name: "libx264", decoder: "mjpeg", inputArgs: []string{"-vcodec", "mjpeg"}, args: softwareArgs}
 	if preference == config.ExportEncoderSoftware {
 		return []encoderSpec{software}
 	}
 	var names []string
+	var candidates []encoderSpec
 	switch platform {
 	case "darwin":
 		names = []string{"h264_videotoolbox"}
+		candidates = append(candidates, hardwarePipeline(
+			"mjpeg_videotoolbox", "h264_videotoolbox",
+			[]string{"-hwaccel", "videotoolbox", "-hwaccel_output_format", "videotoolbox_vld"}, rateArgs,
+		))
 	case "windows":
 		names = []string{"h264_qsv", "h264_nvenc", "h264_amf", "h264_mf"}
+		candidates = append(candidates,
+			hardwarePipeline("mjpeg_qsv", "h264_qsv", []string{"-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mjpeg_qsv"}, rateArgs),
+			hardwarePipeline("mjpeg_cuvid", "h264_nvenc", []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-c:v", "mjpeg_cuvid"}, rateArgs),
+			hardwarePipeline("mjpeg_d3d11va", "h264_amf", []string{"-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"}, rateArgs),
+		)
 	default:
 		names = []string{"h264_vaapi", "h264_qsv", "h264_nvenc"}
+		device := defaultVAAPIDevice()
+		candidates = append(candidates,
+			hardwarePipeline("mjpeg_vaapi", "h264_vaapi", []string{"-hwaccel", "vaapi", "-hwaccel_device", device, "-hwaccel_output_format", "vaapi"}, rateArgs),
+			hardwarePipeline("mjpeg_qsv", "h264_qsv", []string{"-hwaccel", "qsv", "-hwaccel_output_format", "qsv", "-c:v", "mjpeg_qsv"}, rateArgs),
+			hardwarePipeline("mjpeg_cuvid", "h264_nvenc", []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-c:v", "mjpeg_cuvid"}, rateArgs),
+		)
 	}
-	candidates := make([]encoderSpec, 0, len(names)+1)
 	for _, name := range names {
 		args := []string{"-c:v", name}
 		args = append(args, rateArgs...)
 		args = append(args, "-pix_fmt", "yuv420p")
+		inputArgs := []string{"-vcodec", "mjpeg"}
 		if name == "h264_vaapi" {
 			args = []string{"-vf", "format=nv12,hwupload", "-c:v", name}
 			args = append(args, rateArgs...)
+			inputArgs = append([]string{"-vaapi_device", defaultVAAPIDevice()}, inputArgs...)
 		}
-		candidates = append(candidates, encoderSpec{name: name, args: args})
+		candidates = append(candidates, encoderSpec{name: name, decoder: "mjpeg", inputArgs: inputArgs, args: args})
 	}
 	return append(candidates, software)
+}
+
+func hardwarePipeline(decoder, encoder string, inputArgs, rateArgs []string) encoderSpec {
+	args := []string{"-c:v", encoder}
+	args = append(args, rateArgs...)
+	return encoderSpec{name: encoder, decoder: decoder, inputArgs: inputArgs, args: args}
+}
+
+func defaultVAAPIDevice() string {
+	devices, _ := filepath.Glob("/dev/dri/renderD*")
+	if len(devices) > 0 {
+		return devices[0]
+	}
+	return "/dev/dri/renderD128"
 }
 
 func videoBitrateArgs(kbps int) []string {
@@ -389,11 +426,18 @@ func videoBitrateArgs(kbps int) []string {
 }
 
 func probeEncoder(ctx context.Context, ffmpegPath string, encoder encoderSpec) error {
-	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-f", "lavfi", "-i", "color=size=64x64:rate=1", "-frames:v", "1"}
+	frame, err := transcodeProbeFrame()
+	if err != nil {
+		return err
+	}
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-f", "image2pipe", "-framerate", "1"}
+	args = append(args, encoder.inputArgs...)
+	args = append(args, "-i", "pipe:0", "-frames:v", "1", "-an")
 	args = append(args, encoder.args...)
 	args = append(args, "-f", "null", "-")
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	configureCommand(cmd)
+	cmd.Stdin = bytes.NewReader(frame)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(output))
@@ -405,12 +449,31 @@ func probeEncoder(ctx context.Context, ffmpegPath string, encoder encoderSpec) e
 	return nil
 }
 
+func transcodeProbeFrame() ([]byte, error) {
+	frame := image.NewYCbCr(image.Rect(0, 0, 320, 240), image.YCbCrSubsampleRatio420)
+	for i := range frame.Y {
+		frame.Y[i] = 96
+	}
+	for i := range frame.Cb {
+		frame.Cb[i] = 128
+	}
+	for i := range frame.Cr {
+		frame.Cr[i] = 128
+	}
+	var output bytes.Buffer
+	if err := jpeg.Encode(&output, frame, &jpeg.Options{Quality: 75}); err != nil {
+		return nil, fmt.Errorf("encode transcode probe frame: %w", err)
+	}
+	return output.Bytes(), nil
+}
+
 func (s *liveSession) run(ctx context.Context, ffmpegPath string, fps int) error {
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-		"-f", "image2pipe", "-framerate", strconv.Itoa(fps), "-vcodec", "mjpeg", "-i", "pipe:0",
-		"-an",
+		"-f", "image2pipe", "-framerate", strconv.Itoa(fps),
 	}
+	args = append(args, s.encoder.inputArgs...)
+	args = append(args, "-i", "pipe:0", "-an")
 	args = append(args, s.encoder.args...)
 	args = append(args, "-progress", "pipe:2", "-nostats", s.path)
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)

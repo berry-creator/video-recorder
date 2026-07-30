@@ -266,7 +266,7 @@ func captureArgs(cfg config.CaptureConfig, includeWatermark bool) ([]string, err
 		args = append(args, "-vf", watermarkFilter())
 	}
 	args = append(args,
-		"-an", "-c:v", "mjpeg", "-q:v", strconv.Itoa(cfg.JPEGQuality),
+		"-an", "-c:v", "mjpeg", "-q:v", strconv.Itoa(cfg.JPEGQuality), "-pix_fmt", "yuvj420p",
 		"-f", "image2pipe", "pipe:1",
 	)
 	return args, nil

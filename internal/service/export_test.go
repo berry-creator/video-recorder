@@ -113,7 +113,7 @@ func TestLiveTranscoderPublishesH264WithoutSaveTimeEncoding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if status := recording.Status().Transcode; status.State != TranscodeRunning || status.Encoder != "libx264" {
+	if status := recording.Status().Transcode; status.State != TranscodeRunning || status.Decoder != "mjpeg" || status.Encoder != "libx264" {
 		t.Fatalf("live transcode status = %#v", status)
 	}
 	job, err := recording.Save(exporter, "live-integration")

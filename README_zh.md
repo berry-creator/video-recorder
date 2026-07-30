@@ -208,7 +208,7 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 
 `jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。`bufferSeconds` 控制已录制 JPEG 帧在应用内存中累计多久后，批量追加一次到临时录像文件；它不限制最终保存视频的时长。默认 30 秒因此是应用层写入间隔，不保证磁盘每 30 秒物理刷盘：程序不会调用 `fsync`，实际落盘由操作系统控制。保存时会先写出剩余内存批次，再原子移交录像；开始新的录像和自动超时都会清除当前内存批次及对应临时文件。`recording.maxDurationMinutes` 控制该超时时间，默认为 60 分钟。
 
-`export.transcodeDuringRecording` 默认在录制期间同步生成 H.264，保存时只需完成封装和原子发布。`export.encoder` 可设为 `auto` 或 `software`；`auto` 会实际探测可用的系统硬件编码器，并在不可用时回退 `libx264`。`export.softwareThreads` 限制软件编码线程数，默认值为 2。`export.videoBitrateKbps` 控制 H.264 平均视频码率，不在 Console 中显示；默认值为 1000 kbps，由于录像不包含音频，预计每分钟约占用 7.5 MB。实时编码使用最多 2 秒的有界帧队列；编码速度持续不足或进程异常时会停止实时编码，并在保存时使用保留的 MJPEG 临时录像按相同配置码率重新转码。
+`export.transcodeDuringRecording` 默认在录制期间同步生成 H.264，保存时只需完成封装和原子发布。`export.encoder` 可设为 `auto` 或 `software`；`auto` 会优先探测完整的硬件 MJPEG 解码与 H.264 编码链路，然后尝试软件解码配合硬件编码，最后回退 `libx264`。程序会根据操作系统尝试 CUDA/NVENC、QSV、VAAPI、D3D11VA/AMF 和 VideoToolbox，Console 转码状态会显示实际使用的解码器和编码器。`export.softwareThreads` 限制软件编码线程数，默认值为 2。`export.videoBitrateKbps` 控制 H.264 平均视频码率，不在 Console 中显示；默认值为 1000 kbps，由于录像不包含音频，预计每分钟约占用 7.5 MB。实时编码使用最多 2 秒的有界帧队列；编码速度持续不足或进程异常时会停止实时编码，并在保存时使用保留的 MJPEG 临时录像按相同配置码率重新转码。
 
 摄像头输入必须且只能设置 `capture.pixelFormat` 或 `capture.videoCodec` 中的一项。DirectShow 原始模式使用 `pixelFormat`，MJPEG 等压缩模式使用 `videoCodec`。
 

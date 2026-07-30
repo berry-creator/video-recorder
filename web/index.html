@@ -603,8 +603,9 @@
         $('viewers').textContent = data.previewClients.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US');
         const transcode = (data.recording && data.recording.transcode) || {state: 'disabled'};
         const transcodeMessages = {disabled: 'transcodeDisabled', starting: 'transcodeStarting', running: 'transcodeRunning', finalizing: 'transcodeFinalizing', completed: 'transcodeCompleted', fallback: 'transcodeFallback'};
-        $('transcodeState').textContent = t(transcodeMessages[transcode.state] || 'transcodeDisabled', {encoder: transcode.encoder || 'H.264', speed: Number(transcode.speed || 0).toFixed(2)});
-        $('transcodeState').title = transcode.lastError || '';
+        const transcodePipeline = transcode.decoder ? `${transcode.decoder} -> ${transcode.encoder || 'H.264'}` : (transcode.encoder || 'H.264');
+        $('transcodeState').textContent = t(transcodeMessages[transcode.state] || 'transcodeDisabled', {encoder: transcodePipeline, speed: Number(transcode.speed || 0).toFixed(2)});
+        $('transcodeState').title = [transcodePipeline, transcode.lastError].filter(Boolean).join('\n');
         $('resetCaptureButton').disabled = currentState === 'deviceUnavailable' || currentState === 'reconnecting';
         $('exportButton').disabled = currentRecordingState !== 'recording';
         if (data.capture.lastError) showNotice(data.capture.lastError, 'error');
