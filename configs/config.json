@@ -26,6 +26,7 @@
     "queueSize": 8,
     "transcodeDuringRecording": true,
     "encoder": "auto",
-    "softwareThreads": 2
+    "softwareThreads": 2,
+    "videoBitrateKbps": 1000
   }
 }

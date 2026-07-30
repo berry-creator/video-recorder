@@ -46,14 +46,15 @@ type ExportStatus struct {
 }
 
 type exportJob struct {
-	status          ExportStatus
-	segment         captureSegment
-	targetPath      string
-	tempPath        string
-	ffmpegPath      string
-	fps             int
-	softwareThreads int
-	live            *liveEncoding
+	status           ExportStatus
+	segment          captureSegment
+	targetPath       string
+	tempPath         string
+	ffmpegPath       string
+	fps              int
+	softwareThreads  int
+	videoBitrateKbps int
+	live             *liveEncoding
 }
 
 type Exporter struct {
@@ -137,14 +138,15 @@ func (e *Exporter) enqueue(name string, detachLive func() *liveEncoding) (Export
 		CreatedAt:  segment.detachedAt,
 	}
 	job := &exportJob{
-		status:          status,
-		segment:         segment,
-		targetPath:      target,
-		tempPath:        filepath.Join(directory, "."+selectedBase+"-"+id+".part.mp4"),
-		ffmpegPath:      cfg.Capture.FFmpegPath,
-		fps:             cfg.Capture.FPS,
-		softwareThreads: cfg.Export.SoftwareThreads,
-		live:            live,
+		status:           status,
+		segment:          segment,
+		targetPath:       target,
+		tempPath:         filepath.Join(directory, "."+selectedBase+"-"+id+".part.mp4"),
+		ffmpegPath:       cfg.Capture.FFmpegPath,
+		fps:              cfg.Capture.FPS,
+		softwareThreads:  cfg.Export.SoftwareThreads,
+		videoBitrateKbps: cfg.Export.VideoBitrateKbps,
+		live:             live,
 	}
 	if live != nil {
 		job.status.Encoder = live.encoder
@@ -262,9 +264,10 @@ func (e *Exporter) export(job *exportJob) error {
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
 		"-f", "image2pipe", "-framerate", strconv.Itoa(job.fps), "-vcodec", "mjpeg", "-i", "pipe:0",
-		"-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", strconv.Itoa(job.softwareThreads), "-pix_fmt", "yuv420p",
-		"-movflags", "+faststart", job.tempPath,
+		"-an", "-c:v", "libx264", "-preset", "veryfast",
 	}
+	args = append(args, videoBitrateArgs(job.videoBitrateKbps)...)
+	args = append(args, "-threads", strconv.Itoa(job.softwareThreads), "-pix_fmt", "yuv420p", "-movflags", "+faststart", job.tempPath)
 	cmd := exec.CommandContext(ctx, job.ffmpegPath, args...)
 	configureCommand(cmd)
 	cmd.Stdin = reader

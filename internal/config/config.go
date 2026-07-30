@@ -60,6 +60,7 @@ type ExportConfig struct {
 	TranscodeDuringRecording bool   `json:"transcodeDuringRecording"`
 	Encoder                  string `json:"encoder"`
 	SoftwareThreads          int    `json:"softwareThreads"`
+	VideoBitrateKbps         int    `json:"videoBitrateKbps"`
 }
 
 const (
@@ -89,6 +90,7 @@ func Default() Config {
 			TranscodeDuringRecording: true,
 			Encoder:                  ExportEncoderAuto,
 			SoftwareThreads:          2,
+			VideoBitrateKbps:         1000,
 		},
 	}
 }
@@ -193,6 +195,9 @@ func (c Config) validate(requireCameraInput bool) error {
 	}
 	if c.Export.SoftwareThreads < 1 || c.Export.SoftwareThreads > 16 {
 		return errors.New("export software threads must be between 1 and 16")
+	}
+	if c.Export.VideoBitrateKbps < 100 || c.Export.VideoBitrateKbps > 100000 {
+		return errors.New("export video bitrate must be between 100 and 100000 kbps")
 	}
 	return nil
 }

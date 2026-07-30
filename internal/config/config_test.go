@@ -23,6 +23,7 @@ func TestLoadBackfillsLiveTranscodeDefaults(t *testing.T) {
 	delete(export, "transcodeDuringRecording")
 	delete(export, "encoder")
 	delete(export, "softwareThreads")
+	delete(export, "videoBitrateKbps")
 	data, err = json.Marshal(document)
 	if err != nil {
 		t.Fatal(err)
@@ -34,7 +35,7 @@ func TestLoadBackfillsLiveTranscodeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Get().Export; !got.TranscodeDuringRecording || got.Encoder != ExportEncoderAuto || got.SoftwareThreads != 2 {
+	if got := store.Get().Export; !got.TranscodeDuringRecording || got.Encoder != ExportEncoderAuto || got.SoftwareThreads != 2 || got.VideoBitrateKbps != 1000 {
 		t.Fatalf("backfilled export settings = %#v", got)
 	}
 }
@@ -152,7 +153,7 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	if store.Get().Storage.Organization != StorageOrganizationDay {
 		t.Fatalf("default storage organization = %q, want day", store.Get().Storage.Organization)
 	}
-	if export := store.Get().Export; !export.TranscodeDuringRecording || export.Encoder != ExportEncoderAuto || export.SoftwareThreads != 2 {
+	if export := store.Get().Export; !export.TranscodeDuringRecording || export.Encoder != ExportEncoderAuto || export.SoftwareThreads != 2 || export.VideoBitrateKbps != 1000 {
 		t.Fatalf("default export settings = %#v", export)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -179,6 +180,8 @@ func TestValidateExportTranscodeSettings(t *testing.T) {
 		func(cfg *Config) { cfg.Export.Encoder = "unknown" },
 		func(cfg *Config) { cfg.Export.SoftwareThreads = 0 },
 		func(cfg *Config) { cfg.Export.SoftwareThreads = 17 },
+		func(cfg *Config) { cfg.Export.VideoBitrateKbps = 99 },
+		func(cfg *Config) { cfg.Export.VideoBitrateKbps = 100001 },
 	} {
 		cfg := Default()
 		update(&cfg)

@@ -322,7 +322,7 @@ func (s *liveSession) observeSpeed(speed float64) bool {
 }
 
 func (t *LiveTranscoder) selectEncoder(cfg config.Config) (encoderSpec, error) {
-	key := strings.Join([]string{cfg.Capture.FFmpegPath, cfg.Export.Encoder, strconv.Itoa(cfg.Export.SoftwareThreads), strconv.Itoa(cfg.Capture.Width), strconv.Itoa(cfg.Capture.Height), strconv.Itoa(cfg.Capture.FPS), runtime.GOOS}, "\x00")
+	key := strings.Join([]string{cfg.Capture.FFmpegPath, cfg.Export.Encoder, strconv.Itoa(cfg.Export.SoftwareThreads), strconv.Itoa(cfg.Export.VideoBitrateKbps), strconv.Itoa(cfg.Capture.Width), strconv.Itoa(cfg.Capture.Height), strconv.Itoa(cfg.Capture.FPS), runtime.GOOS}, "\x00")
 	t.mu.RLock()
 	if cached, ok := t.probes[key]; ok {
 		t.mu.RUnlock()
@@ -330,7 +330,7 @@ func (t *LiveTranscoder) selectEncoder(cfg config.Config) (encoderSpec, error) {
 	}
 	t.mu.RUnlock()
 
-	candidates := encoderCandidates(runtime.GOOS, cfg.Export.Encoder, cfg.Export.SoftwareThreads, cfg.Capture.Width, cfg.Capture.Height, cfg.Capture.FPS)
+	candidates := encoderCandidates(runtime.GOOS, cfg.Export.Encoder, cfg.Export.SoftwareThreads, cfg.Export.VideoBitrateKbps)
 	var probeErrors []error
 	for _, candidate := range candidates {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -348,8 +348,12 @@ func (t *LiveTranscoder) selectEncoder(cfg config.Config) (encoderSpec, error) {
 	return encoderSpec{}, errors.Join(probeErrors...)
 }
 
-func encoderCandidates(platform, preference string, softwareThreads, width, height, fps int) []encoderSpec {
-	software := encoderSpec{name: "libx264", args: []string{"-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", strconv.Itoa(softwareThreads), "-pix_fmt", "yuv420p"}}
+func encoderCandidates(platform, preference string, softwareThreads, videoBitrateKbps int) []encoderSpec {
+	rateArgs := videoBitrateArgs(videoBitrateKbps)
+	softwareArgs := []string{"-c:v", "libx264", "-preset", "veryfast"}
+	softwareArgs = append(softwareArgs, rateArgs...)
+	softwareArgs = append(softwareArgs, "-threads", strconv.Itoa(softwareThreads), "-pix_fmt", "yuv420p")
+	software := encoderSpec{name: "libx264", args: softwareArgs}
 	if preference == config.ExportEncoderSoftware {
 		return []encoderSpec{software}
 	}
@@ -363,16 +367,25 @@ func encoderCandidates(platform, preference string, softwareThreads, width, heig
 		names = []string{"h264_vaapi", "h264_qsv", "h264_nvenc"}
 	}
 	candidates := make([]encoderSpec, 0, len(names)+1)
-	bitrate := min(max(width*height*fps/7, 1_000_000), 40_000_000)
-	bitrateText := strconv.Itoa(bitrate)
 	for _, name := range names {
-		args := []string{"-c:v", name, "-b:v", bitrateText, "-pix_fmt", "yuv420p"}
+		args := []string{"-c:v", name}
+		args = append(args, rateArgs...)
+		args = append(args, "-pix_fmt", "yuv420p")
 		if name == "h264_vaapi" {
-			args = []string{"-vf", "format=nv12,hwupload", "-c:v", name, "-b:v", bitrateText}
+			args = []string{"-vf", "format=nv12,hwupload", "-c:v", name}
+			args = append(args, rateArgs...)
 		}
 		candidates = append(candidates, encoderSpec{name: name, args: args})
 	}
 	return append(candidates, software)
+}
+
+func videoBitrateArgs(kbps int) []string {
+	return []string{
+		"-b:v", strconv.Itoa(kbps) + "k",
+		"-maxrate", strconv.Itoa(kbps*110/100) + "k",
+		"-bufsize", strconv.Itoa(kbps*2) + "k",
+	}
 }
 
 func probeEncoder(ctx context.Context, ffmpegPath string, encoder encoderSpec) error {
