@@ -56,8 +56,16 @@ const (
 )
 
 type ExportConfig struct {
-	QueueSize int `json:"queueSize"`
+	QueueSize                int    `json:"queueSize"`
+	TranscodeDuringRecording bool   `json:"transcodeDuringRecording"`
+	Encoder                  string `json:"encoder"`
+	SoftwareThreads          int    `json:"softwareThreads"`
 }
+
+const (
+	ExportEncoderAuto     = "auto"
+	ExportEncoderSoftware = "software"
+)
 
 func Default() Config {
 	return Config{
@@ -76,7 +84,12 @@ func Default() Config {
 		},
 		Recording: RecordingConfig{MaxDurationMinutes: 60},
 		Storage:   StorageConfig{Directory: defaultStorageDirectory(), Organization: StorageOrganizationDay},
-		Export:    ExportConfig{QueueSize: 8},
+		Export: ExportConfig{
+			QueueSize:                8,
+			TranscodeDuringRecording: true,
+			Encoder:                  ExportEncoderAuto,
+			SoftwareThreads:          2,
+		},
 	}
 }
 
@@ -174,6 +187,12 @@ func (c Config) validate(requireCameraInput bool) error {
 	}
 	if c.Export.QueueSize < 1 || c.Export.QueueSize > 100 {
 		return errors.New("export queue size must be between 1 and 100")
+	}
+	if c.Export.Encoder != ExportEncoderAuto && c.Export.Encoder != ExportEncoderSoftware {
+		return errors.New("export encoder must be auto or software")
+	}
+	if c.Export.SoftwareThreads < 1 || c.Export.SoftwareThreads > 16 {
+		return errors.New("export software threads must be between 1 and 16")
 	}
 	return nil
 }

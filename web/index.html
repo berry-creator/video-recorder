@@ -42,13 +42,18 @@
     .preview-panel { display: flex; flex-direction: column; }
     .panel-title { min-height: 46px; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; border-bottom: 1px solid #303439; }
     .panel-title h2 { margin: 0; font-size: 14px; font-weight: 620; letter-spacing: 0; }
+    .config-title-copy { min-width: 0; display: flex; align-items: baseline; gap: 9px; }
+    .config-title-copy .muted { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .panel-title-actions { flex: 0 0 auto; display: flex; gap: 6px; margin-left: 10px; }
+    .panel-title-actions button { min-height: 30px; padding: 0 10px; font-size: 12px; }
+    .reset-marker { margin-right: 3px; color: #ef5f5f; font-weight: 750; }
     .muted { color: #9299a2; font-size: 12px; }
     .preview { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; aspect-ratio: 16 / 9; background: #090a0b; }
     canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
     .empty { position: absolute; inset: 0; display: grid; place-items: center; color: #7f8790; font-size: 13px; pointer-events: none; }
     .empty[hidden] { display: none; }
     label[hidden], input[hidden] { display: none; }
-    .metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid #303439; }
+    .metrics { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); border-top: 1px solid #303439; }
     .metric { min-width: 0; padding: 12px 14px; border-right: 1px solid #303439; }
     .metric:last-child { border-right: 0; }
     .metric-label { color: #8f969f; font-size: 11px; margin-bottom: 4px; }
@@ -61,12 +66,13 @@
     .field-help.warning { color: #e6bf68; }
     .field-help.error { color: #ef8585; }
     input, select { width: 100%; height: 36px; margin-top: 6px; padding: 0 10px; border: 1px solid #3b4046; border-radius: 5px; outline: 0; background: #121416; color: #eef0f2; }
+    .checkbox-field { min-height: 55px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .checkbox-field input[type="checkbox"] { width: 18px; height: 18px; margin: 0; padding: 0; accent-color: #42b883; }
     input:focus, select:focus { border-color: #4f86c6; box-shadow: 0 0 0 2px rgb(79 134 198 / 15%); }
     .control-with-action { display: grid; grid-template-columns: minmax(0, 1fr) 36px; gap: 7px; margin-top: 6px; }
     .control-with-action input, .control-with-action select { margin-top: 0; }
     input[readonly] { color: #c8cdd3; cursor: default; }
     .icon-button { width: 36px; min-height: 36px; padding: 0; font-size: 20px; line-height: 1; }
-    .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
     .export-band { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 16px; padding: 15px; border: 1px solid #303439; border-radius: 8px; background: #191c1f; }
     .export-band input { margin: 0; }
     .export-actions { display: flex; gap: 8px; }
@@ -82,7 +88,7 @@
       .metrics { grid-template-columns: 1fr 1fr; }
       .metric { border-bottom: 1px solid #303439; }
       .metric:nth-child(even) { border-right: 0; }
-      .metric:last-child { grid-column: 1 / -1; border-bottom: 0; }
+      .metric:nth-last-child(-n + 2) { border-bottom: 0; }
     }
     @media (max-width: 700px) {
       header { padding: 10px 16px; flex-wrap: wrap; }
@@ -95,7 +101,8 @@
       label.wide, .field.wide { grid-column: auto; }
       .metrics { grid-template-columns: 1fr; }
       .metric, .metric:nth-child(even) { border-right: 0; }
-      .metric:last-child { grid-column: auto; }
+      .metric:nth-last-child(-n + 2) { border-bottom: 1px solid #303439; }
+      .metric:last-child { border-bottom: 0; }
       .export-band { grid-template-columns: 1fr; }
       .export-actions { width: 100%; }
       .export-actions button { flex: 1 1 0; min-width: 0; }
@@ -129,14 +136,21 @@
           <div class="metric"><div class="metric-label" data-i18n="bufferedFrames">已录制帧数</div><div id="bufferFrames" class="metric-value">--</div></div>
           <div class="metric"><div class="metric-label" data-i18n="memoryUsage">内存缓冲</div><div id="bufferBytes" class="metric-value">--</div></div>
           <div class="metric"><div class="metric-label" data-i18n="previewConnections">预览连接</div><div id="viewers" class="metric-value">--</div></div>
+          <div class="metric"><div class="metric-label" data-i18n="transcodeStatus">实时转码</div><div id="transcodeState" class="metric-value">--</div></div>
         </div>
       </section>
       <section class="panel">
-        <div class="panel-title"><h2 data-i18n="captureConfig">配置</h2><span class="muted" data-i18n="configRestartHint">硬件参数变化时重新连接摄像头</span></div>
+        <div class="panel-title">
+          <div class="config-title-copy"><h2 data-i18n="captureConfig">配置</h2><span class="muted" data-i18n="configRestartHint">硬件参数变化时重新连接摄像头</span></div>
+          <div class="panel-title-actions">
+            <button id="resetConfigButton" type="button"><span class="reset-marker" aria-hidden="true" title="此项会恢复默认值" data-i18n-title="resetMarkerHint">*</span><span data-i18n="resetConfig">重置</span></button>
+            <button id="saveConfigButton" class="primary" type="submit" form="configForm" data-i18n="saveConfig">保存</button>
+          </div>
+        </div>
         <form id="configForm">
           <div class="fields">
             <label><span data-i18n="videoSource">视频源</span><select id="source"><option value="mock" data-i18n="mockSource">测试画面</option><option value="camera" data-i18n="cameraSource">摄像头</option></select></label>
-            <label><span data-i18n="frameRate">帧率</span><input id="fps" type="number" min="1" max="120" list="fpsOptions" required><datalist id="fpsOptions"></datalist></label>
+            <label><span class="reset-marker" aria-hidden="true" title="此项会恢复默认值" data-i18n-title="resetMarkerHint">*</span><span data-i18n="frameRate">帧率</span><input id="fps" type="number" min="1" max="120" list="fpsOptions" required><datalist id="fpsOptions"></datalist></label>
             <div class="field wide">
               <label for="device" data-i18n="cameraDevice">摄像头设备</label>
               <div class="control-with-action">
@@ -147,13 +161,16 @@
             <label class="wide"><span data-i18n="cameraMode">硬件模式</span><select id="cameraMode"><option value="" data-i18n="manualMode">手工设置</option></select><span id="cameraCapabilityMeta" class="field-help"></span></label>
             <label id="pixelFormatField"><span data-i18n="pixelFormat">输入像素格式</span><select id="pixelFormatSelect"><option value="" data-i18n="automaticFormat">自动检测</option><option value="__manual__" data-i18n="manualMode">手工设置</option></select><input id="pixelFormat" type="text" autocomplete="off" data-i18n-placeholder="manualPixelFormat" hidden></label>
             <label id="videoCodecField"><span data-i18n="videoCodec">输入视频编码</span><input id="videoCodec" type="text" list="videoCodecOptions" autocomplete="off"><datalist id="videoCodecOptions"></datalist></label>
+            <label><span class="reset-marker" aria-hidden="true" title="此项会恢复默认值" data-i18n-title="resetMarkerHint">*</span><span data-i18n="width">宽度</span><input id="width" type="number" min="160" max="7680" list="widthOptions" required><datalist id="widthOptions"></datalist></label>
+            <label><span class="reset-marker" aria-hidden="true" title="此项会恢复默认值" data-i18n-title="resetMarkerHint">*</span><span data-i18n="height">高度</span><input id="height" type="number" min="120" max="4320" list="heightOptions" required><datalist id="heightOptions"></datalist></label>
+            <label><span class="reset-marker" aria-hidden="true" title="此项会恢复默认值" data-i18n-title="resetMarkerHint">*</span><span data-i18n="bufferDuration">内存缓冲时长（秒）</span><input id="bufferSeconds" type="number" min="1" max="3600" required></label>
+            <label><span class="reset-marker" aria-hidden="true" title="此项会恢复默认值" data-i18n-title="resetMarkerHint">*</span><span data-i18n="jpegQuality">JPEG 质量（2 最佳）</span><input id="jpegQuality" type="number" min="2" max="31" required></label>
+            <label><span data-i18n="maxRecordingDuration">最长录制时长（分钟）</span><input id="maxRecordingMinutes" type="number" min="1" max="10080" required></label>
+            <label class="checkbox-field"><span data-i18n="liveTranscode">录制期间转码</span><input id="transcodeDuringRecording" type="checkbox"></label>
+            <label><span data-i18n="exportEncoder">H.264 编码器</span><select id="exportEncoder"><option value="auto" data-i18n="encoderAuto">自动</option><option value="software" data-i18n="encoderSoftware">软件</option></select></label>
+            <label><span data-i18n="softwareThreads">软件编码线程数</span><input id="softwareThreads" type="number" min="1" max="16" required></label>
             <label><span data-i18n="serverPort">服务端口</span><input id="serverPort" type="number" min="1" max="65535" required></label>
             <label><span data-i18n="storageOrganization">文件分类</span><select id="storageOrganization"><option value="day" data-i18n="organizationDay">按天</option><option value="month" data-i18n="organizationMonth">按月</option><option value="none" data-i18n="organizationNone">无</option></select></label>
-            <label><span data-i18n="width">宽度</span><input id="width" type="number" min="160" max="7680" list="widthOptions" required><datalist id="widthOptions"></datalist></label>
-            <label><span data-i18n="height">高度</span><input id="height" type="number" min="120" max="4320" list="heightOptions" required><datalist id="heightOptions"></datalist></label>
-            <label><span data-i18n="bufferDuration">内存缓冲时长（秒）</span><input id="bufferSeconds" type="number" min="1" max="3600" required></label>
-            <label><span data-i18n="jpegQuality">JPEG 质量（2 最佳）</span><input id="jpegQuality" type="number" min="2" max="31" required></label>
-            <label><span data-i18n="maxRecordingDuration">最长录制时长（分钟）</span><input id="maxRecordingMinutes" type="number" min="1" max="10080" required></label>
             <div class="field wide">
               <label for="directory" data-i18n="storageDirectory">视频存储目录</label>
               <div class="control-with-action">
@@ -163,7 +180,6 @@
             </div>
             <label class="wide"><span data-i18n="allowedOrigins">允许的 Web 应用 Origin</span><input id="allowedOrigins" type="text" placeholder="例如 https://app.example.com，多个地址用逗号分隔" data-i18n-placeholder="originsPlaceholder"></label>
           </div>
-          <div class="form-actions"><button id="resetConfigButton" type="button" data-i18n="resetConfig">重置配置</button><button id="saveConfigButton" class="primary" type="submit" data-i18n="saveConfig">保存配置</button></div>
         </form>
       </section>
     </div>
@@ -179,13 +195,13 @@
       zh: {
         pageTitle: 'Video Recorder 录像控制台', languageLabel: '界面语言', languageAuto: '自动', connecting: '正在连接', consoleTitle: '录像控制台',
         refreshStatus: '刷新状态', livePreview: '实时预览', waitingStream: '等待视频流', noFrame: '暂无画面',
-        captureStatus: '状态', capturedDuration: '已录制时间', resetCapture: '新的录制', bufferedFrames: '已录制帧数', memoryUsage: '内存缓冲', previewConnections: '预览连接',
+        captureStatus: '状态', capturedDuration: '已录制时间', resetCapture: '新的录制', bufferedFrames: '已录制帧数', memoryUsage: '内存缓冲', previewConnections: '预览连接', transcodeStatus: '实时转码',
         captureConfig: '配置', configRestartHint: '硬件参数变化时重新连接摄像头', videoSource: '视频源', mockSource: '测试画面',
         cameraSource: '摄像头', frameRate: '帧率', serverPort: '服务端口', storageOrganization: '文件分类', organizationDay: '按天', organizationMonth: '按月', organizationNone: '无', cameraDevice: '摄像头设备', refreshCameras: '重新检测摄像头', cameraMode: '硬件模式', manualMode: '手工设置', automaticFormat: '自动检测', manualPixelFormat: '输入像素格式', pixelMode: '像素格式', codecMode: '视频编码', pixelFormat: '输入像素格式', videoCodec: '输入视频编码',
         detectingCameras: '正在检测摄像头', noCameras: '未检测到摄像头', unavailableCamera: '{name}（当前不可用）', width: '宽度', height: '高度',
-        bufferDuration: '内存缓冲时长（秒）', jpegQuality: 'JPEG 质量（2 最佳）', maxRecordingDuration: '最长录制时长（分钟）', storageDirectory: '视频存储目录', selectDirectory: '选择视频存储目录',
+        bufferDuration: '内存缓冲时长（秒）', jpegQuality: 'JPEG 质量（2 最佳）', maxRecordingDuration: '最长录制时长（分钟）', liveTranscode: '录制期间转码', exportEncoder: 'H.264 编码器', encoderAuto: '自动', encoderSoftware: '软件', softwareThreads: '软件编码线程数', storageDirectory: '视频存储目录', selectDirectory: '选择视频存储目录',
         allowedOrigins: '允许的 Web 应用 Origin', originsPlaceholder: '例如 https://app.example.com，多个地址用逗号分隔',
-        resetConfig: '重置配置', saveConfig: '保存配置', filePlaceholder: '导出文件名，例如 task_20260728_001', fileLabel: '导出文件名',
+        resetConfig: '重置', saveConfig: '保存', resetMarkerHint: '此项会恢复默认值', filePlaceholder: '导出文件名，例如 task_20260728_001', fileLabel: '导出文件名',
         exportBuffer: '保存', requestFailed: '请求失败', online: '服务在线', offline: '服务离线',
         deviceUnavailable: '设备不可用', reconnecting: '重连中', livePreviewState: '实时预览', recordingState: '录制中', timedOutState: '超时停止录制', live: '实时', previewReconnecting: '正在重连',
         configSaved: '配置已保存。', configSavedRestart: '配置已保存；端口将在重启应用后生效。', missingFileName: '请输入导出文件名。', missingCamera: '请选择一个明确的摄像头设备。', missingInputFormat: '像素格式和视频编码必须且只能填写一项。',
@@ -194,18 +210,18 @@
         resetConfigConfirm: '将帧率、宽度、高度、内存缓冲时长和 JPEG 质量恢复为默认值，是否继续？', configReset: '采集参数已恢复为默认值。', configResetFailed: '重置配置失败：{message}',
         cameraDetectionFailed: '摄像头检测失败：{message}', directorySelectionFailed: '目录选择失败：{message}',
         taskAccepted: '已提交保存，当前为实时预览：{fileName}', exportComplete: '保存完成：{fileName}', exportFailed: '保存失败',
-        exportProgress: '正在保存 {fileName}（{frameCount} 帧）'
+        exportProgress: '正在保存 {fileName}（{frameCount} 帧）', transcodeDisabled: '已关闭', transcodeStarting: '启动中', transcodeRunning: '{encoder} · {speed}x', transcodeFinalizing: '封装中', transcodeCompleted: '已完成 · {encoder}', transcodeFallback: '保存时转码'
       },
       en: {
         pageTitle: 'Video Recorder Console', languageLabel: 'Interface language', languageAuto: 'Auto', connecting: 'Connecting', consoleTitle: 'Recording Console',
         refreshStatus: 'Refresh status', livePreview: 'Live Preview', waitingStream: 'Waiting for video stream', noFrame: 'No video frame',
-        captureStatus: 'Status', capturedDuration: 'Recorded duration', resetCapture: 'New recording', bufferedFrames: 'Recorded frames', memoryUsage: 'Memory buffer', previewConnections: 'Preview clients',
+        captureStatus: 'Status', capturedDuration: 'Recorded duration', resetCapture: 'New recording', bufferedFrames: 'Recorded frames', memoryUsage: 'Memory buffer', previewConnections: 'Preview clients', transcodeStatus: 'Live transcode',
         captureConfig: 'Capture Settings', configRestartHint: 'Camera reconnects when input parameters change', videoSource: 'Video source', mockSource: 'Test pattern',
         cameraSource: 'Camera', frameRate: 'Frame rate', serverPort: 'Service port', storageOrganization: 'File organization', organizationDay: 'By day', organizationMonth: 'By month', organizationNone: 'None', cameraDevice: 'Camera device', refreshCameras: 'Detect cameras again', cameraMode: 'Hardware mode', manualMode: 'Manual settings', automaticFormat: 'Auto detect', manualPixelFormat: 'Enter pixel format', pixelMode: 'Pixel format', codecMode: 'Video codec', pixelFormat: 'Input pixel format', videoCodec: 'Input video codec',
         detectingCameras: 'Detecting cameras', noCameras: 'No cameras detected', unavailableCamera: '{name} (currently unavailable)', width: 'Width', height: 'Height',
-        bufferDuration: 'Memory buffer duration (seconds)', jpegQuality: 'JPEG quality (2 is best)', maxRecordingDuration: 'Maximum recording duration (minutes)', storageDirectory: 'Video storage directory', selectDirectory: 'Select video storage directory',
+        bufferDuration: 'Memory buffer duration (seconds)', jpegQuality: 'JPEG quality (2 is best)', maxRecordingDuration: 'Maximum recording duration (minutes)', liveTranscode: 'Transcode while recording', exportEncoder: 'H.264 encoder', encoderAuto: 'Auto', encoderSoftware: 'Software', softwareThreads: 'Software encoder threads', storageDirectory: 'Video storage directory', selectDirectory: 'Select video storage directory',
         allowedOrigins: 'Allowed web application origins', originsPlaceholder: 'For example https://app.example.com; separate multiple origins with commas',
-        resetConfig: 'Reset settings', saveConfig: 'Save settings', filePlaceholder: 'Export file name, for example task_20260728_001', fileLabel: 'Export file name',
+        resetConfig: 'Reset', saveConfig: 'Save', resetMarkerHint: 'This item will be restored to its default value', filePlaceholder: 'Export file name, for example task_20260728_001', fileLabel: 'Export file name',
         exportBuffer: 'Save', requestFailed: 'Request failed', online: 'Service online', offline: 'Service offline',
         deviceUnavailable: 'Device unavailable', reconnecting: 'Reconnecting', livePreviewState: 'Live preview', recordingState: 'Recording', timedOutState: 'Recording stopped: time limit', live: 'Live', previewReconnecting: 'Reconnecting',
         configSaved: 'Settings saved.', configSavedRestart: 'Settings saved. The port takes effect after restarting the application.', missingFileName: 'Enter an export file name.', missingCamera: 'Select a specific camera device.', missingInputFormat: 'Enter exactly one pixel format or video codec.',
@@ -214,7 +230,7 @@
         resetConfigConfirm: 'Restore frame rate, width, height, memory buffer duration, and JPEG quality to their defaults?', configReset: 'Capture settings restored to their defaults.', configResetFailed: 'Could not reset settings: {message}',
         cameraDetectionFailed: 'Camera detection failed: {message}', directorySelectionFailed: 'Directory selection failed: {message}',
         taskAccepted: 'Save queued; live preview continues: {fileName}', exportComplete: 'Save completed: {fileName}', exportFailed: 'Save failed',
-        exportProgress: 'Saving {fileName} ({frameCount} frames)'
+        exportProgress: 'Saving {fileName} ({frameCount} frames)', transcodeDisabled: 'Disabled', transcodeStarting: 'Starting', transcodeRunning: '{encoder} · {speed}x', transcodeFinalizing: 'Finalizing', transcodeCompleted: 'Completed · {encoder}', transcodeFallback: 'Encode on save'
       }
     };
 
@@ -345,6 +361,9 @@
       $('serverPort').value = configuredPort(config.server.address);
       $('jpegQuality').value = config.capture.jpegQuality;
       $('maxRecordingMinutes').value = config.recording.maxDurationMinutes;
+      $('transcodeDuringRecording').checked = Boolean(config.export.transcodeDuringRecording);
+      $('exportEncoder').value = config.export.encoder || 'auto';
+      $('softwareThreads').value = config.export.softwareThreads || 2;
       $('directory').value = config.storage.directory;
       $('storageOrganization').value = config.storage.organization;
       $('allowedOrigins').value = config.server.allowedOrigins.join(', ');
@@ -582,6 +601,10 @@
         $('bufferFrames').textContent = data.buffer.frames.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US');
         $('bufferBytes').textContent = bytes(data.buffer.memoryBytes || 0);
         $('viewers').textContent = data.previewClients.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US');
+        const transcode = (data.recording && data.recording.transcode) || {state: 'disabled'};
+        const transcodeMessages = {disabled: 'transcodeDisabled', starting: 'transcodeStarting', running: 'transcodeRunning', finalizing: 'transcodeFinalizing', completed: 'transcodeCompleted', fallback: 'transcodeFallback'};
+        $('transcodeState').textContent = t(transcodeMessages[transcode.state] || 'transcodeDisabled', {encoder: transcode.encoder || 'H.264', speed: Number(transcode.speed || 0).toFixed(2)});
+        $('transcodeState').title = transcode.lastError || '';
         $('resetCaptureButton').disabled = currentState === 'deviceUnavailable' || currentState === 'reconnecting';
         $('exportButton').disabled = currentRecordingState !== 'recording';
         if (data.capture.lastError) showNotice(data.capture.lastError, 'error');
@@ -732,6 +755,9 @@
       next.capture.bufferSeconds = Number($('bufferSeconds').value);
       next.capture.jpegQuality = Number($('jpegQuality').value);
       next.recording.maxDurationMinutes = Number($('maxRecordingMinutes').value);
+      next.export.transcodeDuringRecording = $('transcodeDuringRecording').checked;
+      next.export.encoder = $('exportEncoder').value;
+      next.export.softwareThreads = Number($('softwareThreads').value);
       next.server.address = addressWithPort(config.server.address, Number($('serverPort').value));
       next.storage.directory = $('directory').value.trim();
       next.storage.organization = $('storageOrganization').value;

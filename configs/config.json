@@ -23,6 +23,9 @@
     "organization": "day"
   },
   "export": {
-    "queueSize": 8
+    "queueSize": 8,
+    "transcodeDuringRecording": true,
+    "encoder": "auto",
+    "softwareThreads": 2
   }
 }

@@ -121,7 +121,7 @@ func TestConsolePageAndStatus(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(pageText, "录像控制台") {
 		t.Fatalf("console page status = %d, body = %q", response.StatusCode, page)
 	}
-	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormatSelect"`, `id="pixelFormat"`, `id="videoCodecField"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
+	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `id="transcodeDuringRecording"`, `id="exportEncoder"`, `id="softwareThreads"`, `id="transcodeState"`, `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormatSelect"`, `id="pixelFormat"`, `id="videoCodecField"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
 		if !strings.Contains(pageText, expected) {
 			t.Errorf("console page does not contain bilingual UI marker %q", expected)
 		}
@@ -130,11 +130,21 @@ func TestConsolePageAndStatus(t *testing.T) {
 		{`class="brand-name">Video Recorder`, `data-i18n="consoleTitle">录像控制台`},
 		{`id="refreshButton"`, `id="languageSelect"`},
 		{`id="exportButton"`, `id="resetCaptureButton"`},
+		{`id="serverPort"`, `id="storageOrganization"`},
+		{`id="storageOrganization"`, `id="directory"`},
+		{`id="resetConfigButton"`, `id="configForm"`},
+		{`id="resetConfigButton"`, `id="saveConfigButton"`},
 	} {
 		first, second := strings.Index(pageText, order[0]), strings.Index(pageText, order[1])
 		if first < 0 || second < 0 || first >= second {
 			t.Errorf("console elements are not ordered as %q before %q", order[0], order[1])
 		}
+	}
+	if count := strings.Count(pageText, `class="reset-marker"`); count != 6 {
+		t.Errorf("console reset marker count = %d, want 6", count)
+	}
+	if !strings.Contains(pageText, `id="saveConfigButton" class="primary" type="submit" form="configForm"`) {
+		t.Error("console save button is not associated with the configuration form")
 	}
 	response, err = http.Get(ts.server.URL + "/config")
 	if err != nil {

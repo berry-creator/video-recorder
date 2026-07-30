@@ -18,12 +18,13 @@ const (
 var ErrRecordingNotActive = errors.New("no recording is active")
 
 type RecordingStatus struct {
-	State              RecordingState `json:"state"`
-	StartedAt          time.Time      `json:"startedAt,omitempty"`
-	Deadline           time.Time      `json:"deadline,omitempty"`
-	TimedOutAt         time.Time      `json:"timedOutAt,omitempty"`
-	MaxDurationMinutes int64          `json:"maxDurationMinutes"`
-	LastError          string         `json:"lastError,omitempty"`
+	State              RecordingState  `json:"state"`
+	StartedAt          time.Time       `json:"startedAt,omitempty"`
+	Deadline           time.Time       `json:"deadline,omitempty"`
+	TimedOutAt         time.Time       `json:"timedOutAt,omitempty"`
+	MaxDurationMinutes int64           `json:"maxDurationMinutes"`
+	LastError          string          `json:"lastError,omitempty"`
+	Transcode          TranscodeStatus `json:"transcode"`
 }
 
 type RecordingSession struct {
@@ -38,6 +39,13 @@ type RecordingSession struct {
 	timer       *time.Timer
 	generation  uint64
 	closed      bool
+	transcoder  recordingTranscoder
+}
+
+func (s *RecordingSession) SetTranscoder(transcoder recordingTranscoder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.transcoder = transcoder
 }
 
 func NewRecordingSession(buffer *CaptureBuffer, maxDuration time.Duration) (*RecordingSession, error) {
@@ -55,6 +63,9 @@ func (s *RecordingSession) Start() error {
 	}
 	if err := s.buffer.Clear(); err != nil {
 		return err
+	}
+	if s.transcoder != nil {
+		s.transcoder.Start()
 	}
 	s.stopTimerLocked()
 	now := time.Now()
@@ -78,12 +89,18 @@ func (s *RecordingSession) Record(frame Frame) error {
 	}
 	if err := s.buffer.Append(frame); err != nil {
 		s.stopTimerLocked()
+		if s.transcoder != nil {
+			s.transcoder.Discard()
+		}
 		s.state = RecordingPreviewing
 		s.startedAt = time.Time{}
 		s.deadline = time.Time{}
 		s.lastError = err.Error()
 		clearErr := s.buffer.Clear()
 		return errors.Join(fmt.Errorf("record captured frame: %w", err), clearErr)
+	}
+	if s.transcoder != nil {
+		s.transcoder.Write(frame)
 	}
 	return nil
 }
@@ -97,7 +114,11 @@ func (s *RecordingSession) Save(exporter *Exporter, name string) (ExportStatus, 
 	if s.state != RecordingActive {
 		return ExportStatus{}, ErrRecordingNotActive
 	}
-	status, err := exporter.Enqueue(name)
+	var detachLive func() *liveEncoding
+	if s.transcoder != nil {
+		detachLive = s.transcoder.Detach
+	}
+	status, err := exporter.enqueue(name, detachLive)
 	if err != nil {
 		return ExportStatus{}, err
 	}
@@ -135,7 +156,7 @@ func (s *RecordingSession) SetMaxDuration(maxDuration time.Duration) error {
 func (s *RecordingSession) Status() RecordingStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return RecordingStatus{
+	status := RecordingStatus{
 		State:              s.state,
 		StartedAt:          s.startedAt,
 		Deadline:           s.deadline,
@@ -143,6 +164,12 @@ func (s *RecordingSession) Status() RecordingStatus {
 		MaxDurationMinutes: int64(s.maxDuration / time.Minute),
 		LastError:          s.lastError,
 	}
+	if s.transcoder != nil {
+		status.Transcode = s.transcoder.Status()
+	} else {
+		status.Transcode = TranscodeStatus{State: TranscodeDisabled}
+	}
+	return status
 }
 
 func (s *RecordingSession) Close() {
@@ -153,6 +180,9 @@ func (s *RecordingSession) Close() {
 	}
 	s.closed = true
 	s.stopTimerLocked()
+	if s.transcoder != nil {
+		s.transcoder.Close()
+	}
 }
 
 func (s *RecordingSession) scheduleTimeoutLocked() {
@@ -179,6 +209,9 @@ func (s *RecordingSession) stopTimerLocked() {
 
 func (s *RecordingSession) timeoutLocked(now time.Time) error {
 	s.stopTimerLocked()
+	if s.transcoder != nil {
+		s.transcoder.Discard()
+	}
 	clearErr := s.buffer.Clear()
 	s.state = RecordingTimedOut
 	s.startedAt = time.Time{}

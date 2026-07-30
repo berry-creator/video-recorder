@@ -8,6 +8,37 @@ import (
 	"testing"
 )
 
+func TestLoadBackfillsLiveTranscodeDefaults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	export := document["export"].(map[string]any)
+	delete(export, "transcodeDuringRecording")
+	delete(export, "encoder")
+	delete(export, "softwareThreads")
+	data, err = json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Get().Export; !got.TranscodeDuringRecording || got.Encoder != ExportEncoderAuto || got.SoftwareThreads != 2 {
+		t.Fatalf("backfilled export settings = %#v", got)
+	}
+}
+
 func TestLoadNormalizesAmbiguousCameraInput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	cfg := Default()
@@ -121,6 +152,9 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	if store.Get().Storage.Organization != StorageOrganizationDay {
 		t.Fatalf("default storage organization = %q, want day", store.Get().Storage.Organization)
 	}
+	if export := store.Get().Export; !export.TranscodeDuringRecording || export.Encoder != ExportEncoderAuto || export.SoftwareThreads != 2 {
+		t.Fatalf("default export settings = %#v", export)
+	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("default config was not persisted: %v", err)
 	}
@@ -137,6 +171,20 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	}
 	if got := reloaded.Get().Capture.FPS; got != 24 {
 		t.Fatalf("persisted FPS = %d, want 24", got)
+	}
+}
+
+func TestValidateExportTranscodeSettings(t *testing.T) {
+	for _, update := range []func(*Config){
+		func(cfg *Config) { cfg.Export.Encoder = "unknown" },
+		func(cfg *Config) { cfg.Export.SoftwareThreads = 0 },
+		func(cfg *Config) { cfg.Export.SoftwareThreads = 17 },
+	} {
+		cfg := Default()
+		update(&cfg)
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("Validate() accepted export settings %#v", cfg.Export)
+		}
 	}
 }
 

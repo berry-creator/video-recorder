@@ -14,6 +14,7 @@ A local video recording service. It uses FFmpeg with the selected built-in, exte
 - Configurable in-memory batching with thread-safe, disk-backed capture segments
 - Explicit recording sessions with a configurable automatic timeout and cleanup
 - Live JPEG preview over WebSocket without backpressure from slow clients
+- Hardware-first H.264 transcoding while recording, with automatic save-time software fallback
 - Asynchronous H.264 MP4 export with atomic publication after encoding
 - Optional current-time video watermark shared by live preview and exported files
 - Bounded export queue, automatic duplicate-name numbering, and job status tracking
@@ -196,16 +197,21 @@ An explicit `"*"` permits any website to read the local camera preview and invok
     "organization": "day"
   },
   "export": {
-    "queueSize": 8
+    "queueSize": 8,
+    "transcodeDuringRecording": true,
+    "encoder": "auto",
+    "softwareThreads": 2
   }
 }
 ```
 
 `jpegQuality` uses FFmpeg's quantizer scale: `2` is the highest quality and `31` the lowest. `bufferSeconds` controls how long recorded JPEG frames are batched in application memory before one append to the temporary recording file; it does not limit the saved video duration. The default 30 seconds is therefore an application write interval, not a guaranteed physical-disk flush interval: the recorder does not call `fsync`, and the operating system controls physical writeback. Saving flushes the remaining memory batch before atomically detaching the recording. Starting a new recording and automatic timeout both discard the current memory batch and its temporary file. `recording.maxDurationMinutes` controls that timeout and defaults to 60 minutes.
 
+`export.transcodeDuringRecording` generates H.264 while recording by default, so saving normally only finalizes and atomically publishes the file. `export.encoder` accepts `auto` or `software`; `auto` performs a real encoding probe for available system hardware encoders and falls back to `libx264`. `export.softwareThreads` limits software encoding threads and defaults to 2. Live encoding uses a bounded queue of up to two seconds of frames. If encoding remains slower than real time or its process fails, live encoding stops and the retained MJPEG recording is transcoded when saved.
+
 Camera inputs must set exactly one of `capture.pixelFormat` or `capture.videoCodec`. Raw DirectShow modes use `pixelFormat`; compressed DirectShow modes such as MJPEG use `videoCodec`.
 
-Only frames from an active recording are retained in the application-owned system temporary directory until they are saved, replaced, or timed out. Resolution, frame rate, scene complexity, buffer duration, and elapsed recording time affect memory and temporary disk usage. The active temporary directory is removed during graceful shutdown.
+JPEG frames from an active recording are retained in the application-owned system temporary directory until they are saved, replaced, or timed out. When live transcoding is enabled, an H.264 temporary file is also created under `.video-recorder-work` in the configured video storage directory; retaining JPEG data provides a reliable fallback if live encoding fails. Resolution, frame rate, scene complexity, buffer duration, and elapsed recording time affect memory and temporary disk usage. Active temporary files are removed during graceful shutdown.
 
 `storage.organization` accepts `day`, `month`, or `none`. For example, a base directory of `recordings` writes to `recordings/20260729`, `recordings/202607`, or directly to `recordings`, respectively.
 

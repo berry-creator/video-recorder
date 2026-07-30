@@ -55,6 +55,8 @@ func run() error {
 		_ = buffer.Close()
 		return err
 	}
+	liveTranscoder := service.NewLiveTranscoder(store.Get, log)
+	recording.SetTranscoder(liveTranscoder)
 	hub := service.NewFrameHub()
 	capture := service.NewCaptureService(recording, hub, log)
 	if err := capture.Start(root, cfg.Capture); err != nil {

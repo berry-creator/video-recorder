@@ -14,6 +14,7 @@
 - 可配置内存批次且线程安全的磁盘临时采集片段
 - 显式录像会话、可配置自动超时以及超时数据清理
 - WebSocket 实时 JPEG 帧预览，慢客户端不会阻塞采集
+- 录制期间优先使用硬件 H.264 实时转码，异常时自动回退到保存后软件转码
 - 异步 H.264 MP4 导出，临时文件编码成功后原子发布
 - 实时预览与导出文件可共用当前时间水印
 - 导出队列、重复文件名自动编号与任务状态查询
@@ -196,16 +197,21 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
     "organization": "day"
   },
   "export": {
-    "queueSize": 8
+    "queueSize": 8,
+    "transcodeDuringRecording": true,
+    "encoder": "auto",
+    "softwareThreads": 2
   }
 }
 ```
 
 `jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。`bufferSeconds` 控制已录制 JPEG 帧在应用内存中累计多久后，批量追加一次到临时录像文件；它不限制最终保存视频的时长。默认 30 秒因此是应用层写入间隔，不保证磁盘每 30 秒物理刷盘：程序不会调用 `fsync`，实际落盘由操作系统控制。保存时会先写出剩余内存批次，再原子移交录像；开始新的录像和自动超时都会清除当前内存批次及对应临时文件。`recording.maxDurationMinutes` 控制该超时时间，默认为 60 分钟。
 
+`export.transcodeDuringRecording` 默认在录制期间同步生成 H.264，保存时只需完成封装和原子发布。`export.encoder` 可设为 `auto` 或 `software`；`auto` 会实际探测可用的系统硬件编码器，并在不可用时回退 `libx264`。`export.softwareThreads` 限制软件编码线程数，默认值为 2。实时编码使用最多 2 秒的有界帧队列；编码速度持续不足或进程异常时会停止实时编码，并在保存时使用保留的 MJPEG 临时录像重新转码。
+
 摄像头输入必须且只能设置 `capture.pixelFormat` 或 `capture.videoCodec` 中的一项。DirectShow 原始模式使用 `pixelFormat`，MJPEG 等压缩模式使用 `videoCodec`。
 
-只有活动录像中的 JPEG 帧会保存在应用专属的系统临时目录中，直到保存、被新录像替换或超时。分辨率、帧率、画面复杂度、内存缓冲时长和已录制时间会影响内存及临时磁盘占用；正常退出时会删除当前临时目录。
+活动录像中的 JPEG 帧会保存在应用专属的系统临时目录中，直到保存、被新录像替换或超时。启用录制期转码后，还会在视频存储目录的 `.video-recorder-work` 子目录生成 H.264 临时文件；保留 JPEG 数据可以在实时编码失败时可靠回退。分辨率、帧率、画面复杂度、内存缓冲时长和已录制时间会影响内存及临时磁盘占用；正常退出时会删除当前活动录像的临时文件。
 
 `storage.organization` 可设为 `day`、`month` 或 `none`。例如存储目录为 `recordings` 时，文件将分别写入 `recordings/20260729`、`recordings/202607` 或直接写入 `recordings`。
 

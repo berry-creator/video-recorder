@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -32,23 +33,27 @@ const (
 )
 
 type ExportStatus struct {
-	ID         string      `json:"id"`
-	FileName   string      `json:"fileName"`
-	State      ExportState `json:"state"`
-	FrameCount int         `json:"frameCount"`
-	CreatedAt  time.Time   `json:"createdAt"`
-	StartedAt  time.Time   `json:"startedAt,omitempty"`
-	FinishedAt time.Time   `json:"finishedAt,omitempty"`
-	Error      string      `json:"error,omitempty"`
+	ID             string      `json:"id"`
+	FileName       string      `json:"fileName"`
+	State          ExportState `json:"state"`
+	FrameCount     int         `json:"frameCount"`
+	CreatedAt      time.Time   `json:"createdAt"`
+	StartedAt      time.Time   `json:"startedAt,omitempty"`
+	FinishedAt     time.Time   `json:"finishedAt,omitempty"`
+	Error          string      `json:"error,omitempty"`
+	Encoder        string      `json:"encoder,omitempty"`
+	FallbackReason string      `json:"fallbackReason,omitempty"`
 }
 
 type exportJob struct {
-	status     ExportStatus
-	segment    captureSegment
-	targetPath string
-	tempPath   string
-	ffmpegPath string
-	fps        int
+	status          ExportStatus
+	segment         captureSegment
+	targetPath      string
+	tempPath        string
+	ffmpegPath      string
+	fps             int
+	softwareThreads int
+	live            *liveEncoding
 }
 
 type Exporter struct {
@@ -82,6 +87,10 @@ func NewExporter(buffer *CaptureBuffer, configProvider func() config.Config, log
 }
 
 func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
+	return e.enqueue(name, nil)
+}
+
+func (e *Exporter) enqueue(name string, detachLive func() *liveEncoding) (ExportStatus, error) {
 	base, err := normalizeFileName(name)
 	if err != nil {
 		return ExportStatus{}, err
@@ -113,6 +122,10 @@ func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
 		e.mu.Unlock()
 		return ExportStatus{}, err
 	}
+	var live *liveEncoding
+	if detachLive != nil {
+		live = detachLive()
+	}
 	nameKey := strings.ToLower(target)
 	e.sequence++
 	id := fmt.Sprintf("%d-%06d", time.Now().UnixMilli(), e.sequence)
@@ -124,12 +137,21 @@ func (e *Exporter) Enqueue(name string) (ExportStatus, error) {
 		CreatedAt:  segment.detachedAt,
 	}
 	job := &exportJob{
-		status:     status,
-		segment:    segment,
-		targetPath: target,
-		tempPath:   filepath.Join(directory, "."+selectedBase+"-"+id+".part.mp4"),
-		ffmpegPath: cfg.Capture.FFmpegPath,
-		fps:        cfg.Capture.FPS,
+		status:          status,
+		segment:         segment,
+		targetPath:      target,
+		tempPath:        filepath.Join(directory, "."+selectedBase+"-"+id+".part.mp4"),
+		ffmpegPath:      cfg.Capture.FFmpegPath,
+		fps:             cfg.Capture.FPS,
+		softwareThreads: cfg.Export.SoftwareThreads,
+		live:            live,
+	}
+	if live != nil {
+		job.status.Encoder = live.encoder
+		status.Encoder = live.encoder
+	} else {
+		job.status.Encoder = "libx264"
+		status.Encoder = "libx264"
 	}
 	e.jobs[id] = status
 	e.activeNames[nameKey] = struct{}{}
@@ -210,6 +232,17 @@ func (e *Exporter) run() {
 }
 
 func (e *Exporter) export(job *exportJob) error {
+	if job.live != nil {
+		if err := e.publishLive(job); err == nil {
+			_ = os.Remove(job.segment.path)
+			return nil
+		} else {
+			job.status.FallbackReason = err.Error()
+			job.status.Encoder = "libx264"
+			e.updateRunningStatus(job)
+			e.log.Warn("live transcode unavailable during export; using save-time encoding", "file", job.status.FileName, "error", err)
+		}
+	}
 	timeout := time.Duration(job.segment.frames/max(job.fps, 1))*time.Second + 30*time.Second
 	if timeout < 45*time.Second {
 		timeout = 45 * time.Second
@@ -229,7 +262,7 @@ func (e *Exporter) export(job *exportJob) error {
 	args := []string{
 		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
 		"-f", "image2pipe", "-framerate", strconv.Itoa(job.fps), "-vcodec", "mjpeg", "-i", "pipe:0",
-		"-an", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+		"-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", strconv.Itoa(job.softwareThreads), "-pix_fmt", "yuv420p",
 		"-movflags", "+faststart", job.tempPath,
 	}
 	cmd := exec.CommandContext(ctx, job.ffmpegPath, args...)
@@ -253,6 +286,80 @@ func (e *Exporter) export(job *exportJob) error {
 		return fmt.Errorf("publish exported video: %w", err)
 	}
 	return nil
+}
+
+func (e *Exporter) publishLive(job *exportJob) error {
+	defer func() { _ = os.Remove(job.live.path) }()
+	timer := time.NewTimer(30 * time.Second)
+	defer timer.Stop()
+	var result liveEncodingResult
+	select {
+	case current, ok := <-job.live.done:
+		if !ok {
+			return errors.New("live transcode ended without a result")
+		}
+		result = current
+	case <-timer.C:
+		job.live.cancel()
+		return errors.New("live transcode finalization timed out")
+	}
+	if result.err != nil {
+		return fmt.Errorf("live transcode failed: %w", result.err)
+	}
+	info, err := os.Stat(result.path)
+	if err != nil {
+		return fmt.Errorf("inspect live transcode output: %w", err)
+	}
+	if info.Size() == 0 {
+		return errors.New("live transcode output is empty")
+	}
+	if err := os.Link(result.path, job.targetPath); err == nil {
+		return nil
+	}
+	if err := copyFileExclusive(result.path, job.tempPath, job.targetPath); err != nil {
+		return fmt.Errorf("publish live transcode output: %w", err)
+	}
+	return nil
+}
+
+func copyFileExclusive(sourcePath, tempPath, targetPath string) error {
+	defer func() { _ = os.Remove(tempPath) }()
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	temp, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		_ = temp.Close()
+		if !ok {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if _, err := io.Copy(temp, source); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tempPath, targetPath); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
+func (e *Exporter) updateRunningStatus(job *exportJob) {
+	e.mu.Lock()
+	e.jobs[job.status.ID] = job.status
+	e.mu.Unlock()
 }
 
 func (e *Exporter) setRunning(job *exportJob) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -74,6 +75,128 @@ func TestExporterCreatesPlayableMP4(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	t.Fatal("export did not finish before deadline")
+}
+
+func TestLiveTranscoderPublishesH264WithoutSaveTimeEncoding(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+	directory := t.TempDir()
+	cfg := config.Default()
+	cfg.Capture.FFmpegPath = ffmpeg
+	cfg.Capture.FPS = 10
+	cfg.Storage.Directory = directory
+	cfg.Storage.Organization = config.StorageOrganizationNone
+	cfg.Export.Encoder = config.ExportEncoderSoftware
+	cfg.Export.SoftwareThreads = 1
+
+	buffer := newTestCaptureBuffer(t)
+	recording, err := NewRecordingSession(buffer, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcoder := NewLiveTranscoder(func() config.Config { return cfg }, discardLogger())
+	recording.SetTranscoder(transcoder)
+	exporter := NewExporter(buffer, func() config.Config { return cfg }, discardLogger())
+	defer func() {
+		recording.Close()
+		exporter.Close()
+	}()
+
+	if err := recording.Start(); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now()
+	for i := 0; i < 12; i++ {
+		if err := recording.Record(Frame{CapturedAt: base.Add(time.Duration(i) * 100 * time.Millisecond), Data: testJPEG(t, uint8(i*15))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if status := recording.Status().Transcode; status.State != TranscodeRunning || status.Encoder != "libx264" {
+		t.Fatalf("live transcode status = %#v", status)
+	}
+	job, err := recording.Save(exporter, "live-integration")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		current, _ := exporter.Status(job.ID)
+		if current.State == ExportFailed {
+			t.Fatalf("live export failed: %s", current.Error)
+		}
+		if current.State != ExportCompleted {
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		if current.Encoder != "libx264" || current.FallbackReason != "" {
+			t.Fatalf("live export status = %#v", current)
+		}
+		output, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "default=noprint_wrappers=1:nokey=1", filepath.Join(directory, "live-integration.mp4")).Output()
+		if err != nil {
+			t.Fatalf("probe live MP4: %v", err)
+		}
+		if strings.TrimSpace(string(output)) != "h264" {
+			t.Fatalf("live output codec = %q, want h264", output)
+		}
+		return
+	}
+	t.Fatal("live export did not finish before deadline")
+}
+
+func TestExporterFallsBackWhenLiveTranscodeFails(t *testing.T) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg is not installed")
+	}
+	directory := t.TempDir()
+	cfg := config.Default()
+	cfg.Capture.FFmpegPath = ffmpeg
+	cfg.Capture.FPS = 10
+	cfg.Storage.Directory = directory
+	cfg.Storage.Organization = config.StorageOrganizationNone
+	cfg.Export.SoftwareThreads = 1
+	buffer := newTestCaptureBuffer(t)
+	base := time.Now()
+	for i := 0; i < 12; i++ {
+		if err := buffer.Append(Frame{CapturedAt: base.Add(time.Duration(i) * 100 * time.Millisecond), Data: testJPEG(t, uint8(i*15))}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	livePath := filepath.Join(directory, "failed-live.part.mp4")
+	if err := os.WriteFile(livePath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan liveEncodingResult, 1)
+	done <- liveEncodingResult{path: livePath, encoder: "h264_hardware", err: errors.New("hardware encoder stopped")}
+	close(done)
+	exporter := NewExporter(buffer, func() config.Config { return cfg }, discardLogger())
+	defer exporter.Close()
+	status, err := exporter.enqueue("fallback-integration", func() *liveEncoding {
+		return &liveEncoding{path: livePath, encoder: "h264_hardware", done: done, cancel: func() {}}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		current, _ := exporter.Status(status.ID)
+		if current.State == ExportFailed {
+			t.Fatalf("fallback export failed: %s", current.Error)
+		}
+		if current.State != ExportCompleted {
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		if current.Encoder != "libx264" || !strings.Contains(current.FallbackReason, "hardware encoder stopped") {
+			t.Fatalf("fallback export status = %#v", current)
+		}
+		return
+	}
+	t.Fatal("fallback export did not finish before deadline")
 }
 
 func testJPEG(t *testing.T, value uint8) []byte {
