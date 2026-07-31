@@ -19,7 +19,7 @@ A local video recording service. It uses FFmpeg with the selected built-in, exte
 - Optional current-time video watermark shared by live preview and exported files
 - Bounded export queue, automatic duplicate-name numbering, and job status tracking
 - English and Chinese configuration console with automatic language selection
-- Native Windows, macOS, and Linux tray with system-language Chinese/English menus and an optional headless mode
+- Native Windows, macOS, and Linux tray and error notifications, localized from the system language in Chinese or English, with an optional headless mode
 - Atomic configuration updates, graceful shutdown, and web Origin allowlist
 
 ## Architecture
@@ -59,7 +59,9 @@ Go 1.22+ and FFmpeg 5+ are required. The FFmpeg build must include the `mjpeg` d
 go run -tags=headless ./cmd/recorder
 ```
 
-The service starts at `127.0.0.1:8800` by default. Open <http://127.0.0.1:8800/> to be redirected to the Console. If that default port is occupied, it tries `8801`, `8802`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Development runs use `configs/config.json` when it exists. Packaged applications create the configuration in the operating system's user configuration directory, including `~/Library/Application Support/video-recorder/config.json` on macOS and `%AppData%\video-recorder\config.json` on Windows. A newly generated macOS configuration defaults `capture.ffmpegPath` to `/opt/homebrew/bin/ffmpeg`; other platforms default to resolving `ffmpeg` from `PATH`. Videos are written to the configured storage directory.
+The service starts at `127.0.0.1:8800` by default. Open <http://127.0.0.1:8800/> to be redirected to the Console. Only one application instance may run in an operating-system user session by default, regardless of the configuration path or service port; a second launch exits before opening the camera or starting FFmpeg, and abnormal process termination automatically releases the operating-system lock. Set the file-only `server.allowMultipleInstances` option to `true` before startup when concurrent instances are required. If the default port is occupied by another application, Video Recorder tries `8801`, `8802`, and subsequent ports until one is available; the selected URL is written to the log and opened by the tray menu. The initial configuration uses an FFmpeg test pattern at 30 FPS, so preview and export work without a camera. Development runs use `configs/config.json` when it exists. Packaged applications create the configuration in the operating system's user configuration directory, including `~/Library/Application Support/video-recorder/config.json` on macOS and `%AppData%\video-recorder\config.json` on Windows. A newly generated macOS configuration defaults `capture.ffmpegPath` to `/opt/homebrew/bin/ffmpeg`; other platforms default to resolving `ffmpeg` from `PATH`. Videos are written to the configured storage directory.
+
+Desktop builds show a native blocking alert when the application cannot start, including when another instance is already running. A capture failure that persists for five seconds produces a non-blocking operating-system notification; a continuous failure is reported at most once every five minutes, and one recovery notification is sent after capture resumes. Notification text follows the operating-system language for Chinese locales and uses English for every other locale. Headless and container builds skip desktop notifications and continue reporting the same failures in logs.
 
 On first load, the console selects English or Chinese from `navigator.languages`/`navigator.language`. The language selector in the header can persist a manual override; selecting Auto restores browser-language detection.
 
@@ -150,7 +152,7 @@ Each WebSocket binary message contains one complete JPEG image suitable for `cre
 
 The Console exposes the service port as a numeric setting. Port changes take effect after restarting the application; capture and storage settings take effect immediately. Automatic port fallback applies only to the default port `8800`, while an explicitly configured non-default port remains strict.
 
-The Console reports `Device unavailable`, `Reconnecting`, `Live preview`, `Recording`, or `Recording stopped: time limit`. Recorded duration and frame count apply only to the active recording. `New recording` discards the current in-memory batch and temporary file before starting again. `Save` stops recording after the segment is queued, while FFmpeg and live preview remain active. When the configured duration limit is reached, recording stops and all unsaved memory and temporary-file data is deleted. The default limit is 60 minutes. When FFmpeg provides `drawtext`, each preview and exported frame contains only the current time in the upper-right corner.
+The Console reports `Device unavailable`, `Reconnecting`, `Live preview`, `Recording`, or `Recording stopped: time limit`. Recorded duration and frame count apply only to the active recording. `New recording` discards the current in-memory batch and temporary file before starting again. `Save` stops recording after the segment is queued, while FFmpeg and live preview remain active. When the configured duration limit is reached, recording stops and all unsaved memory and temporary-file data is deleted. The default limit is 180 minutes. When FFmpeg provides `drawtext`, each preview and exported frame contains only the current time in the upper-right corner.
 
 The console selects the video storage directory through the operating system's directory picker and saves the returned absolute path with the rest of the configuration. Files are organized by day (`yyyyMMdd`) by default; monthly (`yyyyMM`) and unclassified storage are also available. On Linux desktops the directory picker requires Zenity or KDialog; headless environments can set `storage.directory` and `storage.organization` directly in the JSON configuration. Reset Settings restores only frame rate, width, height, memory buffer duration, and JPEG quality; other settings and the active recording are retained.
 
@@ -175,7 +177,8 @@ An explicit `"*"` permits any website to read the local camera preview and invok
 {
   "server": {
     "address": "127.0.0.1:8800",
-    "allowedOrigins": []
+    "allowedOrigins": [],
+    "allowMultipleInstances": false
   },
   "capture": {
     "source": "mock",
@@ -190,7 +193,7 @@ An explicit `"*"` permits any website to read the local camera preview and invok
     "ffmpegPath": "ffmpeg"
   },
   "recording": {
-    "maxDurationMinutes": 60
+    "maxDurationMinutes": 180
   },
   "storage": {
     "directory": "recordings",
@@ -206,7 +209,9 @@ An explicit `"*"` permits any website to read the local camera preview and invok
 }
 ```
 
-`jpegQuality` uses FFmpeg's quantizer scale: `2` is the highest quality and `31` the lowest. `bufferSeconds` controls how long recorded JPEG frames are batched in application memory before one append to the temporary recording file; it does not limit the saved video duration. The default 30 seconds is therefore an application write interval, not a guaranteed physical-disk flush interval: the recorder does not call `fsync`, and the operating system controls physical writeback. Saving flushes the remaining memory batch before atomically detaching the recording. Starting a new recording and automatic timeout both discard the current memory batch and its temporary file. `recording.maxDurationMinutes` controls that timeout and defaults to 60 minutes.
+`server.allowMultipleInstances` defaults to `false` and is intentionally not exposed in the Console. Change it directly in the JSON configuration before starting the application. Instances with this option enabled use a shared operating-system lock and may coexist; a default instance uses an exclusive lock and cannot start while any other instance is active.
+
+`jpegQuality` uses FFmpeg's quantizer scale: `2` is the highest quality and `31` the lowest. `bufferSeconds` controls how long recorded JPEG frames are batched in application memory before one append to the temporary recording file; it does not limit the saved video duration. The default 30 seconds is therefore an application write interval, not a guaranteed physical-disk flush interval: the recorder does not call `fsync`, and the operating system controls physical writeback. Saving flushes the remaining memory batch before atomically detaching the recording. Starting a new recording and automatic timeout both discard the current memory batch and its temporary file. `recording.maxDurationMinutes` controls that timeout and defaults to 180 minutes.
 
 `export.transcodeDuringRecording` generates H.264 while recording by default, so saving normally only finalizes and atomically publishes the file. `export.encoder` accepts `auto` or `software`; `auto` probes complete hardware MJPEG decode and H.264 encode pipelines first, then hardware encoders with software decoding, and finally falls back to `libx264`. CUDA/NVENC, QSV, VAAPI, D3D11VA/AMF, and VideoToolbox are attempted when relevant to the operating system. The active decoder and encoder are shown in the Console transcode status. `export.softwareThreads` limits software encoding threads and defaults to 2. `export.videoBitrateKbps` controls the H.264 average video bitrate without adding a Console field; its default of 1000 kbps produces approximately 7.5 MB per minute because recordings do not contain audio. Live encoding uses a bounded queue of up to two seconds of frames. If encoding remains slower than real time or its process fails, live encoding stops and the retained MJPEG recording is transcoded at the same configured bitrate when saved.
 
@@ -239,7 +244,7 @@ The native macOS tray uses Cocoa and must be built on a macOS host:
 GOOS=darwin GOARCH=arm64 go build -o video-recorder-mac ./cmd/recorder
 ```
 
-Use `-tags=headless` for a build without a desktop tray. Linux builds without the `desktop` tag also default to headless mode, keeping server and container builds free of GTK dependencies. FFmpeg must still be installed on production machines, or `capture.ffmpegPath` must point to an FFmpeg executable distributed with the application.
+Use `-tags=headless` for a build without a desktop tray or operating-system notifications. Linux builds without the `desktop` tag also default to headless mode, keeping server and container builds free of GTK dependencies. Linux desktop alerts use Zenity or KDialog, while runtime notifications use `notify-send` or KDialog when available. FFmpeg must still be installed on production machines, or `capture.ffmpegPath` must point to an FFmpeg executable distributed with the application.
 
 When no repository-local `configs/config.json` exists, packaged applications create their configuration under the operating system's user configuration directory. The initial video directory is `~/Movies/Video Recorder` on macOS and the user's `Videos/Video Recorder` directory on Windows and Linux.
 
@@ -281,6 +286,7 @@ video-recorder/
 ├── internal/config/     # Validation and atomic config storage
 ├── internal/service/    # Capture segments, preview, and export
 ├── internal/tray/       # Desktop and headless tray adapters
+├── internal/notification/ # Localized operating-system alerts and notifications
 ├── pkg/logger/          # Structured logging
 ├── web/                 # Console embedded in the binary
 ├── go.mod

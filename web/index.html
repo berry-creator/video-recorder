@@ -524,11 +524,11 @@
 
         const probedPixelFormat = query.get('pixelFormat') || '';
         if (allowRetry && selectedPixelFormat && selectedPixelFormat !== probedPixelFormat && modes.length === 0) {
-          return await loadCameraCapabilities(true, true, false);
+          return await loadCameraCapabilities(applyRecommended, true, false);
         }
 
         cameraModes = modes;
-        if (applyRecommended || !requestedPixelFormat || !requestedSupported) {
+        if (applyRecommended) {
           const recommendedMode = recommended.width ? recommended : cameraModes.find((mode) => mode.pixelFormat === selectedPixelFormat || mode.videoCodec === requestedVideoCodec);
           applyCameraMode(recommendedMode);
         }

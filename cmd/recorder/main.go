@@ -18,22 +18,37 @@ import (
 
 	"video-recorder/internal/api"
 	"video-recorder/internal/config"
+	"video-recorder/internal/notification"
 	"video-recorder/internal/service"
 	"video-recorder/internal/tray"
 	"video-recorder/pkg/logger"
 )
 
 func main() {
-	if err := run(); err != nil {
+	notifier := notification.New()
+	if err := run(notifier); err != nil {
 		fmt.Fprintln(os.Stderr, "video-recorder:", err)
+		if notifyErr := notifier.AlertStartup(err, errors.Is(err, ErrInstanceAlreadyRunning)); notifyErr != nil {
+			fmt.Fprintln(os.Stderr, "video-recorder: show startup alert:", notifyErr)
+		}
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(notifier *notification.Manager) error {
 	configPath := flag.String("config", defaultConfigPath(), "path to the JSON configuration file")
 	debug := flag.Bool("debug", false, "enable debug logging")
 	flag.Parse()
+
+	allowMultipleInstances, err := config.ReadAllowMultipleInstances(*configPath)
+	if err != nil {
+		return err
+	}
+	instance, err := acquireSingleInstance(allowMultipleInstances)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = instance.Close() }()
 
 	log := logger.New(*debug)
 	log.Info("loading configuration", "path", *configPath)
@@ -95,6 +110,7 @@ func run() error {
 
 	appCtx, cancel := context.WithCancel(root)
 	defer cancel()
+	go monitorCaptureNotifications(appCtx, capture, store, notifier, log)
 	go func() {
 		select {
 		case err := <-errCh:

@@ -19,7 +19,7 @@
 - 实时预览与导出文件可共用当前时间水印
 - 导出队列、重复文件名自动编号与任务状态查询
 - 支持中英文且可自动选择语言的本地配置和预览控制台
-- Windows、macOS 和 Linux 原生托盘，菜单根据系统语言自动使用中文或英文，并支持可选的 headless 模式
+- Windows、macOS 和 Linux 原生托盘及错误通知，根据系统语言自动使用中文或英文，并支持可选的 headless 模式
 - 配置原子保存、优雅退出和 Web Origin 白名单
 
 ## 系统架构
@@ -59,7 +59,9 @@
 go run -tags=headless ./cmd/recorder
 ```
 
-默认从 `127.0.0.1:8800` 启动。访问 <http://127.0.0.1:8800/> 会自动跳转到 Console。如果默认端口被占用，会依次尝试 `8801`、`8802` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。开发运行时若存在 `configs/config.json` 则使用该文件；打包后的应用会在系统用户配置目录中创建配置，例如 macOS 的 `~/Library/Application Support/video-recorder/config.json` 和 Windows 的 `%AppData%\video-recorder\config.json`。macOS 首次生成的配置默认将 `capture.ffmpegPath` 设为 `/opt/homebrew/bin/ffmpeg`，其他平台默认从 `PATH` 查找 `ffmpeg`。视频写入配置的存储目录。
+默认从 `127.0.0.1:8800` 启动。同一操作系统用户会话默认只允许运行一个应用实例，配置文件路径或服务端口不同也不能重复启动；第二次启动会在打开摄像头和运行 FFmpeg 之前退出，进程异常终止时操作系统会自动释放实例锁。确需并行运行时，需在启动前直接将配置文件中的 `server.allowMultipleInstances` 设为 `true`。访问 <http://127.0.0.1:8800/> 会自动跳转到 Console。如果默认端口被其他应用占用，会依次尝试 `8801`、`8802` 等后续端口，最终 URL 会写入日志并由托盘菜单打开。首次运行默认使用 30 FPS 的 FFmpeg 测试画面，因此没有摄像头也可以验证预览和导出。开发运行时若存在 `configs/config.json` 则使用该文件；打包后的应用会在系统用户配置目录中创建配置，例如 macOS 的 `~/Library/Application Support/video-recorder/config.json` 和 Windows 的 `%AppData%\video-recorder\config.json`。macOS 首次生成的配置默认将 `capture.ffmpegPath` 设为 `/opt/homebrew/bin/ffmpeg`，其他平台默认从 `PATH` 查找 `ffmpeg`。视频写入配置的存储目录。
+
+桌面构建在应用无法启动时显示原生阻塞式提示，包括已有其他实例运行的情况。采集失败持续 5 秒后显示非阻塞的操作系统通知；连续失败最多每 5 分钟提示一次，采集恢复后再提示一次。中文系统语言使用中文通知，其他所有语言使用英文。Headless 和容器构建跳过桌面通知，相同错误仍会写入日志。
 
 控制台首次打开时根据 `navigator.languages`/`navigator.language` 自动选择中文或英文。页眉中的语言选择器可以手动覆盖并记住选择；切回“自动”会恢复浏览器语言检测。
 
@@ -150,7 +152,7 @@ ws://127.0.0.1:<实际端口>/ws/live
 
 Console 提供数值形式的服务端口配置。修改端口后需重启应用才会生效，其他采集和存储配置立即生效。自动端口回退仅用于默认端口 `8800`；明确配置的其他端口会严格绑定，不会静默切换。
 
-控制台状态包括“设备不可用”“重连中”“实时预览”“录制中”和“超时停止录制”。“已录制时间”和“已录制帧数”只统计当前活动录像。“新的录制”会先清除当前内存批次和临时文件，再开始录像；“保存”在录像加入队列后停止录像，但 FFmpeg 和实时预览保持运行。达到配置的最长时长后会停止录像，并删除所有尚未保存的内存和临时文件数据；默认时长为 60 分钟。当 FFmpeg 包含 `drawtext` 时，实时预览和导出视频的右上角仅显示当前时间。
+控制台状态包括“设备不可用”“重连中”“实时预览”“录制中”和“超时停止录制”。“已录制时间”和“已录制帧数”只统计当前活动录像。“新的录制”会先清除当前内存批次和临时文件，再开始录像；“保存”在录像加入队列后停止录像，但 FFmpeg 和实时预览保持运行。达到配置的最长时长后会停止录像，并删除所有尚未保存的内存和临时文件数据；默认时长为 180 分钟。当 FFmpeg 包含 `drawtext` 时，实时预览和导出视频的右上角仅显示当前时间。
 
 控制台通过操作系统目录选择框选择视频存储目录，并随其他配置保存系统返回的绝对路径。文件默认按天存放在 `yyyyMMdd` 子目录中，也可以选择按月存放到 `yyyyMM` 子目录或不分类。Linux 桌面环境的目录选择框需要安装 Zenity 或 KDialog；headless 环境可直接在 JSON 配置中设置 `storage.directory` 和 `storage.organization`。“重置配置”只恢复帧率、宽度、高度、内存缓冲时长和 JPEG 质量，其他设置和当前活动录像保持不变。
 
@@ -175,7 +177,8 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 {
   "server": {
     "address": "127.0.0.1:8800",
-    "allowedOrigins": []
+    "allowedOrigins": [],
+    "allowMultipleInstances": false
   },
   "capture": {
     "source": "mock",
@@ -190,7 +193,7 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
     "ffmpegPath": "ffmpeg"
   },
   "recording": {
-    "maxDurationMinutes": 60
+    "maxDurationMinutes": 180
   },
   "storage": {
     "directory": "recordings",
@@ -206,7 +209,9 @@ Console 提供数值形式的服务端口配置。修改端口后需重启应用
 }
 ```
 
-`jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。`bufferSeconds` 控制已录制 JPEG 帧在应用内存中累计多久后，批量追加一次到临时录像文件；它不限制最终保存视频的时长。默认 30 秒因此是应用层写入间隔，不保证磁盘每 30 秒物理刷盘：程序不会调用 `fsync`，实际落盘由操作系统控制。保存时会先写出剩余内存批次，再原子移交录像；开始新的录像和自动超时都会清除当前内存批次及对应临时文件。`recording.maxDurationMinutes` 控制该超时时间，默认为 60 分钟。
+`server.allowMultipleInstances` 默认为 `false`，且有意不在 Console 中展示；需要在启动应用前直接修改 JSON 配置。启用该选项的实例使用共享操作系统锁，可以互相共存；默认实例使用独占锁，只要已有任意实例运行就不能启动。
+
+`jpegQuality` 使用 FFmpeg 的量化范围，`2` 质量最高、`31` 最低。`bufferSeconds` 控制已录制 JPEG 帧在应用内存中累计多久后，批量追加一次到临时录像文件；它不限制最终保存视频的时长。默认 30 秒因此是应用层写入间隔，不保证磁盘每 30 秒物理刷盘：程序不会调用 `fsync`，实际落盘由操作系统控制。保存时会先写出剩余内存批次，再原子移交录像；开始新的录像和自动超时都会清除当前内存批次及对应临时文件。`recording.maxDurationMinutes` 控制该超时时间，默认为 180 分钟。
 
 `export.transcodeDuringRecording` 默认在录制期间同步生成 H.264，保存时只需完成封装和原子发布。`export.encoder` 可设为 `auto` 或 `software`；`auto` 会优先探测完整的硬件 MJPEG 解码与 H.264 编码链路，然后尝试软件解码配合硬件编码，最后回退 `libx264`。程序会根据操作系统尝试 CUDA/NVENC、QSV、VAAPI、D3D11VA/AMF 和 VideoToolbox，Console 转码状态会显示实际使用的解码器和编码器。`export.softwareThreads` 限制软件编码线程数，默认值为 2。`export.videoBitrateKbps` 控制 H.264 平均视频码率，不在 Console 中显示；默认值为 1000 kbps，由于录像不包含音频，预计每分钟约占用 7.5 MB。实时编码使用最多 2 秒的有界帧队列；编码速度持续不足或进程异常时会停止实时编码，并在保存时使用保留的 MJPEG 临时录像按相同配置码率重新转码。
 
@@ -239,7 +244,7 @@ macOS 原生托盘依赖 Cocoa，需要在 macOS 主机上构建：
 GOOS=darwin GOARCH=arm64 go build -o video-recorder-mac ./cmd/recorder
 ```
 
-无桌面托盘的构建使用 `-tags=headless`。Linux 未指定 `desktop` 标签时也默认使用 headless 模式，使服务器和容器构建无需 GTK 依赖。生产机器仍需安装 FFmpeg，或在配置中将 `capture.ffmpegPath` 指向随应用分发的 FFmpeg 可执行文件。
+无桌面托盘和操作系统通知的构建使用 `-tags=headless`。Linux 未指定 `desktop` 标签时也默认使用 headless 模式，使服务器和容器构建无需 GTK 依赖。Linux 桌面启动提示使用 Zenity 或 KDialog，运行时通知在可用时使用 `notify-send` 或 KDialog。生产机器仍需安装 FFmpeg，或在配置中将 `capture.ffmpegPath` 指向随应用分发的 FFmpeg 可执行文件。
 
 当程序所在目录不存在 `configs/config.json` 时，打包应用会在操作系统的用户配置目录创建配置。初始视频目录在 macOS 上为 `~/Movies/Video Recorder`，在 Windows 和 Linux 上为用户的 `Videos/Video Recorder` 目录。
 
@@ -281,6 +286,7 @@ video-recorder/
 ├── internal/config/     # 配置校验和原子存储
 ├── internal/service/    # 采集片段、预览和导出
 ├── internal/tray/       # 桌面与 headless 托盘适配
+├── internal/notification/ # 本地化操作系统提示与通知
 ├── pkg/logger/          # 结构化日志
 ├── web/                 # 嵌入二进制的控制台
 ├── go.mod

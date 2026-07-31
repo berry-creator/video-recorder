@@ -1,7 +1,8 @@
 {
   "server": {
     "address": "127.0.0.1:8800",
-    "allowedOrigins": []
+    "allowedOrigins": [],
+    "allowMultipleInstances": false
   },
   "capture": {
     "source": "mock",
@@ -16,7 +17,7 @@
     "ffmpegPath": "ffmpeg"
   },
   "recording": {
-    "maxDurationMinutes": 60
+    "maxDurationMinutes": 180
   },
   "storage": {
     "directory": "recordings",

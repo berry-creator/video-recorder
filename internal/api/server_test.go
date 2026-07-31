@@ -146,6 +146,14 @@ func TestConsolePageAndStatus(t *testing.T) {
 	if !strings.Contains(pageText, `id="saveConfigButton" class="primary" type="submit" form="configForm"`) {
 		t.Error("console save button is not associated with the configuration form")
 	}
+	if strings.Contains(pageText, "allowMultipleInstances") {
+		t.Error("console exposes the file-only multiple-instance setting")
+	}
+	for _, marker := range []string{"$('fps').value = config.capture.fps", "loadCameraCapabilities(applyRecommended, true, false)", "if (applyRecommended)"} {
+		if !strings.Contains(pageText, marker) {
+			t.Errorf("console is missing FPS preservation marker %q", marker)
+		}
+	}
 	response, err = http.Get(ts.server.URL + "/config")
 	if err != nil {
 		t.Fatal(err)
@@ -186,6 +194,7 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	next.Capture.FFmpegPath = "/custom/ffmpeg"
 	next.Server.Address = "127.0.0.1:9123"
 	next.Server.AllowedOrigins = []string{"https://app.example.com"}
+	next.Server.AllowMultipleInstances = true
 	next.Storage.Organization = config.StorageOrganizationMonth
 	next.Export.QueueSize = 3
 	if err := ts.api.config.Update(next); err != nil {
@@ -214,7 +223,7 @@ func TestResetConfigRestoresCaptureDefaultsWithoutClearingBuffer(t *testing.T) {
 	if body.Data.Storage.Organization != config.StorageOrganizationMonth {
 		t.Fatalf("reset changed storage organization to %q, want month", body.Data.Storage.Organization)
 	}
-	if body.Data.Capture.Source != next.Capture.Source || body.Data.Capture.Device != next.Capture.Device || body.Data.Capture.PixelFormat != next.Capture.PixelFormat || body.Data.Capture.VideoCodec != next.Capture.VideoCodec || body.Data.Capture.FFmpegPath != next.Capture.FFmpegPath || body.Data.Server.Address != next.Server.Address || len(body.Data.Server.AllowedOrigins) != 1 || body.Data.Storage.Directory != next.Storage.Directory || body.Data.Export.QueueSize != next.Export.QueueSize {
+	if body.Data.Capture.Source != next.Capture.Source || body.Data.Capture.Device != next.Capture.Device || body.Data.Capture.PixelFormat != next.Capture.PixelFormat || body.Data.Capture.VideoCodec != next.Capture.VideoCodec || body.Data.Capture.FFmpegPath != next.Capture.FFmpegPath || body.Data.Server.Address != next.Server.Address || len(body.Data.Server.AllowedOrigins) != 1 || !body.Data.Server.AllowMultipleInstances || body.Data.Storage.Directory != next.Storage.Directory || body.Data.Export.QueueSize != next.Export.QueueSize {
 		t.Fatalf("reset changed a non-resettable setting: got %#v, before %#v", body.Data, next)
 	}
 	if frames != 1 {

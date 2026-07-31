@@ -23,8 +23,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Address        string   `json:"address"`
-	AllowedOrigins []string `json:"allowedOrigins"`
+	Address                string   `json:"address"`
+	AllowedOrigins         []string `json:"allowedOrigins"`
+	AllowMultipleInstances bool     `json:"allowMultipleInstances"`
 }
 
 type CaptureConfig struct {
@@ -70,7 +71,7 @@ const (
 
 func Default() Config {
 	return Config{
-		Server: ServerConfig{Address: "127.0.0.1:8800", AllowedOrigins: []string{}},
+		Server: ServerConfig{Address: "127.0.0.1:8800", AllowedOrigins: []string{}, AllowMultipleInstances: false},
 		Capture: CaptureConfig{
 			Source:        "mock",
 			Device:        "",
@@ -83,7 +84,7 @@ func Default() Config {
 			BufferSeconds: 30,
 			FFmpegPath:    defaultFFmpegPath(runtime.GOOS),
 		},
-		Recording: RecordingConfig{MaxDurationMinutes: 60},
+		Recording: RecordingConfig{MaxDurationMinutes: 180},
 		Storage:   StorageConfig{Directory: defaultStorageDirectory(), Organization: StorageOrganizationDay},
 		Export: ExportConfig{
 			QueueSize:                8,
@@ -233,6 +234,25 @@ func Load(path string) (*Store, error) {
 		}
 	}
 	return store, nil
+}
+
+func ReadAllowMultipleInstances(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read config: %w", err)
+	}
+	var document struct {
+		Server struct {
+			AllowMultipleInstances bool `json:"allowMultipleInstances"`
+		} `json:"server"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return false, fmt.Errorf("decode config: %w", err)
+	}
+	return document.Server.AllowMultipleInstances, nil
 }
 
 func normalizeLoadedConfig(cfg *Config) bool {

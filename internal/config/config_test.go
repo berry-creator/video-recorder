@@ -147,11 +147,14 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	if store.Get().Capture.BufferSeconds != 30 {
 		t.Fatalf("default memory buffer duration = %d, want 30", store.Get().Capture.BufferSeconds)
 	}
-	if store.Get().Recording.MaxDurationMinutes != 60 {
-		t.Fatalf("default maximum recording duration = %d, want 60", store.Get().Recording.MaxDurationMinutes)
+	if store.Get().Recording.MaxDurationMinutes != 180 {
+		t.Fatalf("default maximum recording duration = %d, want 180", store.Get().Recording.MaxDurationMinutes)
 	}
 	if store.Get().Storage.Organization != StorageOrganizationDay {
 		t.Fatalf("default storage organization = %q, want day", store.Get().Storage.Organization)
+	}
+	if store.Get().Server.AllowMultipleInstances {
+		t.Fatal("multiple instances are enabled by default")
 	}
 	if export := store.Get().Export; !export.TranscodeDuringRecording || export.Encoder != ExportEncoderAuto || export.SoftwareThreads != 2 || export.VideoBitrateKbps != 1000 {
 		t.Fatalf("default export settings = %#v", export)
@@ -172,6 +175,28 @@ func TestLoadCreatesDefaultAndPersistsUpdate(t *testing.T) {
 	}
 	if got := reloaded.Get().Capture.FPS; got != 24 {
 		t.Fatalf("persisted FPS = %d, want 24", got)
+	}
+}
+
+func TestReadAllowMultipleInstances(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if allowed, err := ReadAllowMultipleInstances(missing); err != nil || allowed {
+		t.Fatalf("missing config policy = %v, %v; want false, nil", allowed, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	cfg := Default()
+	cfg.Server.AllowMultipleInstances = true
+	writeTestConfig(t, path, cfg)
+	if allowed, err := ReadAllowMultipleInstances(path); err != nil || !allowed {
+		t.Fatalf("configured policy = %v, %v; want true, nil", allowed, err)
+	}
+
+	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadAllowMultipleInstances(path); err == nil {
+		t.Fatal("malformed instance policy config was accepted")
 	}
 }
 
