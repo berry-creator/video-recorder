@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -435,8 +434,7 @@ func probeEncoder(ctx context.Context, ffmpegPath string, encoder encoderSpec) e
 	args = append(args, "-i", "pipe:0", "-frames:v", "1", "-an")
 	args = append(args, encoder.args...)
 	args = append(args, "-f", "null", "-")
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-	configureCommand(cmd)
+	cmd := newManagedCommand(ctx, ffmpegPath, args...)
 	cmd.Stdin = bytes.NewReader(frame)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -476,8 +474,7 @@ func (s *liveSession) run(ctx context.Context, ffmpegPath string, fps int) error
 	args = append(args, "-i", "pipe:0", "-an")
 	args = append(args, s.encoder.args...)
 	args = append(args, "-progress", "pipe:2", "-nostats", s.path)
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-	configureCommand(cmd)
+	cmd := newManagedCommand(ctx, ffmpegPath, args...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return err
@@ -510,7 +507,7 @@ func (s *liveSession) consumeProgress(stderr io.Reader) {
 	}
 }
 
-func (s *liveSession) writeFrames(cmd *exec.Cmd, stdin io.WriteCloser) {
+func (s *liveSession) writeFrames(cmd *managedCommand, stdin io.WriteCloser) {
 	var writeErr error
 	for frame := range s.frames {
 		if _, err := stdin.Write(frame); err != nil {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -161,8 +160,7 @@ func (s *CaptureService) captureOnce(ctx context.Context, cfg config.CaptureConf
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, cfg.FFmpegPath, args...)
-	configureCommand(cmd)
+	cmd := newManagedCommand(ctx, cfg.FFmpegPath, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("open ffmpeg output: %w", err)
@@ -236,8 +234,7 @@ func (s *CaptureService) supportsDrawtext(ctx context.Context, ffmpegPath string
 	}
 	s.featureMu.Unlock()
 
-	cmd := exec.CommandContext(ctx, ffmpegPath, "-hide_banner", "-filters")
-	configureCommand(cmd)
+	cmd := newManagedCommand(ctx, ffmpegPath, "-hide_banner", "-filters")
 	output, err := cmd.CombinedOutput()
 	available := err == nil && hasFFmpegFilter(string(output), "drawtext")
 	s.featureMu.Lock()

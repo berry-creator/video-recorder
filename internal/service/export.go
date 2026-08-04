@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -268,8 +267,7 @@ func (e *Exporter) export(job *exportJob) error {
 	}
 	args = append(args, videoBitrateArgs(job.videoBitrateKbps)...)
 	args = append(args, "-threads", strconv.Itoa(job.softwareThreads), "-pix_fmt", "yuv420p", "-movflags", "+faststart", job.tempPath)
-	cmd := exec.CommandContext(ctx, job.ffmpegPath, args...)
-	configureCommand(cmd)
+	cmd := newManagedCommand(ctx, job.ffmpegPath, args...)
 	cmd.Stdin = reader
 	var stderr strings.Builder
 	cmd.Stderr = &limitedStringWriter{builder: &stderr, limit: 8192}

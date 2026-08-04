@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -53,8 +52,7 @@ func NewCameraDetector() *CameraDetector {
 	return &CameraDetector{
 		platform: runtime.GOOS,
 		run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			cmd := exec.CommandContext(ctx, name, args...)
-			configureCommand(cmd)
+			cmd := newManagedCommand(ctx, name, args...)
 			return cmd.CombinedOutput()
 		},
 		glob:     filepath.Glob,

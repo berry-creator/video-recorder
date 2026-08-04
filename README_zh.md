@@ -63,6 +63,8 @@ go run -tags=headless ./cmd/recorder
 
 桌面构建在应用无法启动时显示原生阻塞式提示，包括已有其他实例运行的情况。采集失败持续 5 秒后显示非阻塞的操作系统通知；连续失败最多每 5 分钟提示一次，采集恢复后再提示一次。中文系统语言使用中文通知，其他所有语言使用英文。Headless 和容器构建跳过桌面通知，相同错误仍会写入日志。
 
+采集、摄像头枚举、能力探测、实时转码和保存转码创建的所有 FFmpeg 进程都会绑定到 Video Recorder 的进程生命周期。正常退出时直接取消各命令；应用崩溃或被强制结束时，macOS 和 Linux 的父进程监督器会终止成为孤儿的命令，Windows 则使用配置了 `KILL_ON_JOB_CLOSE` 的 Job Object。这样可以避免应用退出后残留 FFmpeg 继续占用摄像头或重新连接 Continuity Camera。
+
 控制台首次打开时根据 `navigator.languages`/`navigator.language` 自动选择中文或英文。页眉中的语言选择器可以手动覆盖并记住选择；切回“自动”会恢复浏览器语言检测。
 
 使用其他配置文件：

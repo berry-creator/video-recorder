@@ -63,6 +63,8 @@ The service starts at `127.0.0.1:8800` by default. Open <http://127.0.0.1:8800/>
 
 Desktop builds show a native blocking alert when the application cannot start, including when another instance is already running. A capture failure that persists for five seconds produces a non-blocking operating-system notification; a continuous failure is reported at most once every five minutes, and one recovery notification is sent after capture resumes. Notification text follows the operating-system language for Chinese locales and uses English for every other locale. Headless and container builds skip desktop notifications and continue reporting the same failures in logs.
 
+Every FFmpeg process created for capture, camera detection, capability probing, live transcoding, or save-time export is tied to the Video Recorder process lifetime. Normal shutdown cancels each command directly. If the application crashes or is forcibly terminated, a parent-process supervisor on macOS and Linux terminates the orphaned command, while Windows uses a Job Object configured with `KILL_ON_JOB_CLOSE`. This prevents stale FFmpeg processes from retaining a camera or reconnecting to a Continuity Camera after the application has exited.
+
 On first load, the console selects English or Chinese from `navigator.languages`/`navigator.language`. The language selector in the header can persist a manual override; selecting Auto restores browser-language detection.
 
 To use a different configuration file:
