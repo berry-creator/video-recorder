@@ -58,6 +58,15 @@
     .metric:last-child { border-right: 0; }
     .metric-label { color: #8f969f; font-size: 11px; margin-bottom: 4px; }
     .metric-value { font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .recording-metadata { border-top: 1px solid #303439; }
+    .recording-metadata[hidden] { display: none; }
+    .recording-metadata summary { min-height: 42px; display: flex; min-width: 0; align-items: center; gap: 10px; padding: 11px 14px; cursor: pointer; color: #aeb4bc; font-size: 12px; list-style: none; }
+    .recording-metadata summary::-webkit-details-marker { display: none; }
+    .recording-metadata summary::before { width: 0; height: 0; flex: 0 0 auto; border-top: 4px solid transparent; border-bottom: 4px solid transparent; border-left: 6px solid #9299a2; content: ""; transition: transform 120ms ease; }
+    .recording-metadata[open] summary::before { transform: rotate(90deg); }
+    .recording-metadata-label { flex: 0 0 auto; font-weight: 620; color: #cbd0d6; }
+    .recording-metadata-preview { min-width: 0; flex: 1 1 auto; overflow: hidden; color: #9299a2; text-overflow: ellipsis; white-space: nowrap; }
+    .recording-metadata-content { max-height: 200px; margin: 0; overflow: auto; padding: 12px 14px; border-top: 1px solid #303439; background: #121416; color: #d7dbe0; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
     form { padding: 15px; }
     .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     label, .field { display: block; min-width: 0; color: #aeb4bc; font-size: 12px; }
@@ -138,6 +147,10 @@
           <div class="metric"><div class="metric-label" data-i18n="previewConnections">预览连接</div><div id="viewers" class="metric-value">--</div></div>
           <div class="metric"><div class="metric-label" data-i18n="transcodeStatus">实时转码</div><div id="transcodeState" class="metric-value">--</div></div>
         </div>
+        <details id="recordingMetadataPanel" class="recording-metadata" hidden>
+          <summary><span class="recording-metadata-label" data-i18n="recordingMetadata">录像元信息</span><span id="recordingMetadataPreview" class="recording-metadata-preview"></span></summary>
+          <pre id="recordingMetadataContent" class="recording-metadata-content"></pre>
+        </details>
       </section>
       <section class="panel">
         <div class="panel-title">
@@ -195,7 +208,7 @@
       zh: {
         pageTitle: 'Video Recorder 录像控制台', languageLabel: '界面语言', languageAuto: '自动', connecting: '正在连接', consoleTitle: '录像控制台',
         refreshStatus: '刷新状态', livePreview: '实时预览', waitingStream: '等待视频流', noFrame: '暂无画面',
-        captureStatus: '状态', capturedDuration: '已录制时间', resetCapture: '新的录制', bufferedFrames: '已录制帧数', memoryUsage: '内存缓冲', previewConnections: '预览连接', transcodeStatus: '实时转码',
+        captureStatus: '状态', capturedDuration: '已录制时间', resetCapture: '新的录制', bufferedFrames: '已录制帧数', memoryUsage: '内存缓冲', previewConnections: '预览连接', transcodeStatus: '实时转码', recordingMetadata: '录像元信息',
         captureConfig: '配置', configRestartHint: '硬件参数变化时重新连接摄像头', videoSource: '视频源', mockSource: '测试画面',
         cameraSource: '摄像头', frameRate: '帧率', serverPort: '服务端口', storageOrganization: '文件分类', organizationDay: '按天', organizationMonth: '按月', organizationNone: '无', cameraDevice: '摄像头设备', refreshCameras: '重新检测摄像头', cameraMode: '硬件模式', manualMode: '手工设置', automaticFormat: '自动检测', manualPixelFormat: '输入像素格式', pixelMode: '像素格式', codecMode: '视频编码', pixelFormat: '输入像素格式', videoCodec: '输入视频编码',
         detectingCameras: '正在检测摄像头', noCameras: '未检测到摄像头', unavailableCamera: '{name}（当前不可用）', width: '宽度', height: '高度',
@@ -215,7 +228,7 @@
       en: {
         pageTitle: 'Video Recorder Console', languageLabel: 'Interface language', languageAuto: 'Auto', connecting: 'Connecting', consoleTitle: 'Recording Console',
         refreshStatus: 'Refresh status', livePreview: 'Live Preview', waitingStream: 'Waiting for video stream', noFrame: 'No video frame',
-        captureStatus: 'Status', capturedDuration: 'Recorded duration', resetCapture: 'New recording', bufferedFrames: 'Recorded frames', memoryUsage: 'Memory buffer', previewConnections: 'Preview clients', transcodeStatus: 'Live transcode',
+        captureStatus: 'Status', capturedDuration: 'Recorded duration', resetCapture: 'New recording', bufferedFrames: 'Recorded frames', memoryUsage: 'Memory buffer', previewConnections: 'Preview clients', transcodeStatus: 'Live transcode', recordingMetadata: 'Recording metadata',
         captureConfig: 'Capture Settings', configRestartHint: 'Camera reconnects when input parameters change', videoSource: 'Video source', mockSource: 'Test pattern',
         cameraSource: 'Camera', frameRate: 'Frame rate', serverPort: 'Service port', storageOrganization: 'File organization', organizationDay: 'By day', organizationMonth: 'By month', organizationNone: 'None', cameraDevice: 'Camera device', refreshCameras: 'Detect cameras again', cameraMode: 'Hardware mode', manualMode: 'Manual settings', automaticFormat: 'Auto detect', manualPixelFormat: 'Enter pixel format', pixelMode: 'Pixel format', codecMode: 'Video codec', pixelFormat: 'Input pixel format', videoCodec: 'Input video codec',
         detectingCameras: 'Detecting cameras', noCameras: 'No cameras detected', unavailableCamera: '{name} (currently unavailable)', width: 'Width', height: 'Height',
@@ -295,6 +308,7 @@
     let lastCaptureWarning = '';
     let currentState = 'reconnecting';
     let currentRecordingState = 'previewing';
+    let lastRecordingMetadata = null;
     let cameraModes = [];
     let detectedPixelFormats = [];
     let cameraPlatform = '';
@@ -309,6 +323,22 @@
     function showNotice(message, type = '') {
       $('notice').textContent = message;
       $('notice').className = `notice ${type}`;
+    }
+
+    function updateRecordingMetadata(metadata) {
+      const value = typeof metadata === 'string' ? metadata : '';
+      if (value === lastRecordingMetadata) return;
+      lastRecordingMetadata = value;
+      const panel = $('recordingMetadataPanel');
+      panel.hidden = value === '';
+      if (value === '') {
+        panel.open = false;
+        $('recordingMetadataPreview').textContent = '';
+        $('recordingMetadataContent').textContent = '';
+        return;
+      }
+      $('recordingMetadataPreview').textContent = value.replace(/\s+/g, ' ').trim();
+      $('recordingMetadataContent').textContent = value;
     }
 
     function bytes(value) {
@@ -593,6 +623,7 @@
         const data = payload.data;
         currentState = data.state || 'reconnecting';
         currentRecordingState = (data.recording && data.recording.state) || 'previewing';
+        updateRecordingMetadata((data.recording && data.recording.metadata) || '');
         $('serviceDot').classList.add('online');
         $('serviceText').textContent = t('online');
         const stateMessages = {deviceUnavailable: 'deviceUnavailable', reconnecting: 'reconnecting', previewing: 'livePreviewState', recording: 'recordingState', timedOut: 'timedOutState'};
@@ -783,6 +814,7 @@
         const payload = await api(`/api/v1/record/save?fileName=${encodeURIComponent(name)}`, {method: 'POST'});
         currentRecordingState = 'previewing';
         currentState = 'previewing';
+        updateRecordingMetadata('');
         $('capturedDuration').textContent = friendlyDuration(0);
         $('bufferFrames').textContent = '0';
         $('bufferBytes').textContent = bytes(0);

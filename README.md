@@ -94,10 +94,10 @@ Saving settings persists the selected device ID. FFmpeg reconnects only when cap
 The application starts in live-preview mode and does not write frames to temporary storage. Start a recording explicitly:
 
 ```http
-POST /api/v1/capture/reset
+POST /api/v1/capture/reset?metadata=%7B%22caseId%22%3A%2242%22%7D
 ```
 
-This endpoint discards any unsaved active recording and starts a new one. It does not restart FFmpeg or reopen the camera.
+This endpoint discards any unsaved active recording and starts a new one. The optional `metadata` query parameter is stored verbatim in memory and returned as `recording.metadata` by `GET /api/v1/status`; it is not interpreted, persisted, or added to the output video. Starting another recording replaces it. It does not restart FFmpeg or reopen the camera.
 
 Save the active recording:
 
@@ -120,6 +120,14 @@ A successful response means the active recording was atomically queued for savin
 ```
 
 `fileName` cannot contain path separators, control characters, or Windows-invalid characters. Existing files are never overwritten: `recording.mp4` is followed by `recording_01.mp4`, `recording_02.mp4`, and so on. Saving without an active recording or without recorded frames returns `409`; a full queue returns `503`.
+
+Atomically queue the current segment and immediately continue recording into a new segment:
+
+```http
+POST /api/v1/record/save-and-continue?fileName=task_20260728_001&metadata=%7B%22caseId%22%3A%2243%22%7D
+```
+
+This endpoint returns the same export-task fields as `record/save`. Its optional `metadata` parameter belongs to the next segment: on success, the active buffer and segment duration restart from zero, the recording state remains `recording`, and the supplied metadata replaces the current value. Omitting `metadata` retains the current value; an explicit empty value clears it for the next segment. A successful `record/save` stops recording and clears `metadata`. Failed save requests do not change the recording, buffer, timer, or metadata.
 
 ### Query an Export Job
 
@@ -149,8 +157,10 @@ Each WebSocket binary message contains one complete JPEG image suitable for `cre
 | `GET` | `/api/v1/cameras` | Detect available camera devices |
 | `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...&videoCodec=...` | Best-effort detection of complete input modes for a device |
 | `POST` | `/api/v1/storage/directory/select` | Open the system storage-directory picker |
-| `GET` | `/api/v1/status` | Device, recording, buffer, and preview-client status |
-| `POST` | `/api/v1/capture/reset` | Discard any unsaved recording and start a new recording |
+| `GET` | `/api/v1/status` | Device, recording metadata, buffer, and preview-client status |
+| `POST` | `/api/v1/capture/reset?metadata=...` | Discard any unsaved recording and start a new recording with optional metadata |
+| `POST` | `/api/v1/record/save?fileName=...` | Queue the active segment, stop recording, and clear `metadata` |
+| `POST` | `/api/v1/record/save-and-continue?fileName=...&metadata=...` | Queue the active segment and continue with optional metadata for the next segment |
 
 The Console exposes the service port as a numeric setting. Port changes take effect after restarting the application; capture and storage settings take effect immediately. Automatic port fallback applies only to the default port `8800`, while an explicitly configured non-default port remains strict.
 

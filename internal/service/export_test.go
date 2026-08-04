@@ -104,7 +104,7 @@ func TestLiveTranscoderPublishesH264WithoutSaveTimeEncoding(t *testing.T) {
 		exporter.Close()
 	}()
 
-	if err := recording.Start(); err != nil {
+	if err := recording.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	base := time.Now()

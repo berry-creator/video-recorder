@@ -94,10 +94,10 @@ Linux 通过 `/dev/video*` 检测设备；macOS 和 Windows 使用 FFmpeg 的原
 应用启动后只进行实时预览，不会把帧写入临时存储。明确开始一次录像：
 
 ```http
-POST /api/v1/capture/reset
+POST /api/v1/capture/reset?metadata=%7B%22caseId%22%3A%2242%22%7D
 ```
 
-该接口会丢弃尚未保存的当前录像并开始新的录像，但不会重启 FFmpeg 或重新打开摄像头。
+该接口会丢弃尚未保存的当前录像并开始新的录像。可选的 `metadata` 查询参数会原样保存在内存中，并通过 `GET /api/v1/status` 的 `recording.metadata` 返回；程序不会解析、持久化或写入输出视频。开始另一段录像时会覆盖该值。该接口不会重启 FFmpeg 或重新打开摄像头。
 
 保存当前录像：
 
@@ -120,6 +120,14 @@ POST /api/v1/record/save?fileName=task_20260728_001
 ```
 
 `fileName` 不允许目录分隔符、控制字符和 Windows 非法字符。已有文件不会被覆盖：`recording.mp4` 后续会依次保存为 `recording_01.mp4`、`recording_02.mp4`。没有活动录像或录像中还没有帧时返回 `409`，队列已满返回 `503`。
+
+将当前分段原子加入保存队列，并立即继续录制新的分段：
+
+```http
+POST /api/v1/record/save-and-continue?fileName=task_20260728_001&metadata=%7B%22caseId%22%3A%2243%22%7D
+```
+
+该接口返回与 `record/save` 相同的导出任务字段。可选的 `metadata` 参数属于下一段录像：成功后，当前缓冲和分段时长从零重新计算，录像状态保持为 `recording`，传入的元信息会替换当前值。省略 `metadata` 时沿用当前值；显式传入空值时将下一段元信息设为空。普通 `record/save` 成功后会停止录像并清空 `metadata`。保存请求失败时不会修改录像、缓冲、计时器或元信息。
 
 ### 查询导出任务
 
@@ -149,8 +157,10 @@ ws://127.0.0.1:<实际端口>/ws/live
 | `GET` | `/api/v1/cameras` | 检测可用摄像头设备 |
 | `GET` | `/api/v1/cameras/capabilities?device=...&pixelFormat=...&videoCodec=...` | 尽力检测设备支持的完整输入模式 |
 | `POST` | `/api/v1/storage/directory/select` | 打开系统存储目录选择框 |
-| `GET` | `/api/v1/status` | 设备、录像、缓冲和预览连接状态 |
-| `POST` | `/api/v1/capture/reset` | 丢弃尚未保存的录像并开始新的录像 |
+| `GET` | `/api/v1/status` | 设备、录像元信息、缓冲和预览连接状态 |
+| `POST` | `/api/v1/capture/reset?metadata=...` | 丢弃尚未保存的录像，并以可选元信息开始新的录像 |
+| `POST` | `/api/v1/record/save?fileName=...` | 将活动分段加入队列、停止录像并清空 `metadata` |
+| `POST` | `/api/v1/record/save-and-continue?fileName=...&metadata=...` | 将活动分段加入队列，并以可选的下一段元信息继续录像 |
 
 Console 提供数值形式的服务端口配置。修改端口后需重启应用才会生效，其他采集和存储配置立即生效。自动端口回退仅用于默认端口 `8800`；明确配置的其他端口会严格绑定，不会静默切换。
 

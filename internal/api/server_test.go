@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -121,7 +122,7 @@ func TestConsolePageAndStatus(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(pageText, "录像控制台") {
 		t.Fatalf("console page status = %d, body = %q", response.StatusCode, page)
 	}
-	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", `id="maxRecordingMinutes"`, `id="transcodeDuringRecording"`, `id="exportEncoder"`, `id="softwareThreads"`, `id="transcodeState"`, "transcode.decoder", `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormatSelect"`, `id="pixelFormat"`, `id="videoCodecField"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
+	for _, expected := range []string{"Recording Console", "navigator.languages", "videoRecorderLanguage", "新的录制", "New recording", "设备不可用", "Device unavailable", "重连中", "Reconnecting", "超时停止录制", "录像元信息", "Recording metadata", `id="recordingMetadataPanel" class="recording-metadata" hidden`, `id="recordingMetadataPreview"`, `id="recordingMetadataContent"`, `id="maxRecordingMinutes"`, `id="transcodeDuringRecording"`, `id="exportEncoder"`, `id="softwareThreads"`, `id="transcodeState"`, "transcode.decoder", `value="auto"`, `value="zh"`, `value="en"`, `id="device"`, `id="cameraMode"`, `id="pixelFormatSelect"`, `id="pixelFormat"`, `id="videoCodecField"`, `id="videoCodec"`, `id="bufferSeconds"`, `id="serverPort"`, `id="storageOrganization"`, `id="resetConfigButton"`, "/api/v1/cameras", "/api/v1/cameras/capabilities", "/api/v1/storage/directory/select", "/api/v1/config/reset", "/api/v1/capture/reset"} {
 		if !strings.Contains(pageText, expected) {
 			t.Errorf("console page does not contain bilingual UI marker %q", expected)
 		}
@@ -152,6 +153,16 @@ func TestConsolePageAndStatus(t *testing.T) {
 	for _, marker := range []string{"$('fps').value = config.capture.fps", "loadCameraCapabilities(applyRecommended, true, false)", "if (applyRecommended)"} {
 		if !strings.Contains(pageText, marker) {
 			t.Errorf("console is missing FPS preservation marker %q", marker)
+		}
+	}
+	for _, marker := range []string{"$('recordingMetadataPreview').textContent = value", "$('recordingMetadataContent').textContent = value", "updateRecordingMetadata((data.recording && data.recording.metadata) || '')", "updateRecordingMetadata('')"} {
+		if !strings.Contains(pageText, marker) {
+			t.Errorf("console is missing recording metadata behavior %q", marker)
+		}
+	}
+	for _, marker := range []string{".recording-metadata summary {", "display: flex", ".recording-metadata summary::before", ".recording-metadata[open] summary::before"} {
+		if !strings.Contains(pageText, marker) {
+			t.Errorf("console is missing inline metadata disclosure marker %q", marker)
 		}
 	}
 	response, err = http.Get(ts.server.URL + "/config")
@@ -285,11 +296,48 @@ func TestResetCaptureStartsRecordingAndClearsBufferedFrames(t *testing.T) {
 	}
 }
 
+func TestResetCaptureStoresMetadataInStatus(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.close()
+	metadata := `{"caseId":"case 42","operator":"Ada"}`
+	response, err := http.Post(ts.server.URL+"/api/v1/capture/reset?metadata="+url.QueryEscape(metadata), "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var resetBody struct {
+		Data service.RecordingStatus `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&resetBody); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || resetBody.Data.Metadata != metadata {
+		t.Fatalf("reset status = %d, recording = %#v", response.StatusCode, resetBody.Data)
+	}
+
+	statusResponse, err := http.Get(ts.server.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer statusResponse.Body.Close()
+	var statusBody struct {
+		Data struct {
+			Recording service.RecordingStatus `json:"recording"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(statusResponse.Body).Decode(&statusBody); err != nil {
+		t.Fatal(err)
+	}
+	if statusBody.Data.Recording.Metadata != metadata {
+		t.Fatalf("status metadata = %q, want %q", statusBody.Data.Recording.Metadata, metadata)
+	}
+}
+
 func TestStatusReportsOnlyActiveRecordingDuration(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 	assertStatusDuration(t, ts.server.URL, 0)
-	if err := ts.recording.Start(); err != nil {
+	if err := ts.recording.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -430,7 +478,7 @@ func TestSaveRejectsEmptyBuffer(t *testing.T) {
 func TestSaveQueuesCurrentRecordingAndReturnsToPreviewWithoutRestartingCapture(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
-	if err := ts.recording.Start(); err != nil {
+	if err := ts.recording.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	if err := ts.recording.Record(service.Frame{CapturedAt: time.Now(), Data: []byte("frame")}); err != nil {
@@ -472,6 +520,56 @@ func TestSaveQueuesCurrentRecordingAndReturnsToPreviewWithoutRestartingCapture(t
 	defer second.Body.Close()
 	if second.StatusCode != http.StatusConflict {
 		t.Fatalf("second save status = %d, want 409 without newly captured frames", second.StatusCode)
+	}
+}
+
+func TestSaveAndContinueQueuesSegmentAndKeepsRecording(t *testing.T) {
+	ts := newTestServer(t)
+	defer ts.close()
+	if err := ts.recording.Start("continuous-job"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.recording.Record(service.Frame{CapturedAt: time.Now(), Data: []byte("first")}); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := http.Post(ts.server.URL+"/api/v1/record/save-and-continue?fileName=first&metadata=next-job", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var body struct {
+		Message string `json:"message"`
+		Data    struct {
+			JobID string `json:"jobId"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	status := ts.recording.Status()
+	stats := ts.buffer.Stats()
+	if response.StatusCode != http.StatusOK || body.Data.JobID == "" || !strings.Contains(body.Message, "recording continues") {
+		t.Fatalf("save-and-continue status = %d, body = %#v", response.StatusCode, body)
+	}
+	if status.State != service.RecordingActive || status.Metadata != "next-job" || stats.Frames != 0 || stats.Bytes != 0 {
+		t.Fatalf("continued recording = status %#v, buffer %#v", status, stats)
+	}
+	job, ok := ts.exporter.Status(body.Data.JobID)
+	if !ok || job.FrameCount != 1 {
+		t.Fatalf("queued first segment = %#v, found = %v", job, ok)
+	}
+
+	if err := ts.recording.Record(service.Frame{CapturedAt: time.Now(), Data: []byte("second")}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := http.Post(ts.server.URL+"/api/v1/record/save?fileName=second", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Body.Close()
+	if second.StatusCode != http.StatusOK || ts.recording.Status().State != service.RecordingPreviewing || ts.recording.Status().Metadata != "" {
+		t.Fatalf("second save status = %d, recording = %#v", second.StatusCode, ts.recording.Status())
 	}
 }
 

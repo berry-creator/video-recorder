@@ -24,7 +24,7 @@ func TestRecordingSessionIgnoresFramesUntilStarted(t *testing.T) {
 func TestRecordingSessionStartAndSaveReturnsToPreview(t *testing.T) {
 	buffer := newTestCaptureBuffer(t)
 	session := newTestRecordingSession(t, buffer, time.Minute)
-	if err := session.Start(); err != nil {
+	if err := session.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.Record(Frame{CapturedAt: time.Now(), Data: []byte("frame")}); err != nil {
@@ -54,7 +54,7 @@ func TestRecordingSessionStartAndSaveReturnsToPreview(t *testing.T) {
 func TestRecordingSessionSaveFailureKeepsRecordingActive(t *testing.T) {
 	buffer := newTestCaptureBuffer(t)
 	session := newTestRecordingSession(t, buffer, time.Minute)
-	if err := session.Start(); err != nil {
+	if err := session.Start("keep-on-failure"); err != nil {
 		t.Fatal(err)
 	}
 	cfg := config.Default()
@@ -67,15 +67,88 @@ func TestRecordingSessionSaveFailureKeepsRecordingActive(t *testing.T) {
 	if _, err := session.Save(exporter, "empty-recording"); !errors.Is(err, ErrNoFrames) {
 		t.Fatalf("Save() error = %v, want ErrNoFrames", err)
 	}
-	if session.Status().State != RecordingActive {
-		t.Fatalf("recording state = %q, want recording", session.Status().State)
+	nextMetadata := "must-not-apply"
+	if _, err := session.SaveAndContinue(exporter, "empty-continuation", &nextMetadata); !errors.Is(err, ErrNoFrames) {
+		t.Fatalf("SaveAndContinue() error = %v, want ErrNoFrames", err)
+	}
+	if status := session.Status(); status.State != RecordingActive || status.Metadata != "keep-on-failure" {
+		t.Fatalf("recording status after failed saves = %#v", status)
+	}
+}
+
+func TestRecordingSessionSaveAndContinueStartsANewSegment(t *testing.T) {
+	buffer := newTestCaptureBuffer(t)
+	session := newTestRecordingSession(t, buffer, time.Minute)
+	if err := session.Start(`{"caseId":"42"}`); err != nil {
+		t.Fatal(err)
+	}
+	firstStartedAt := session.Status().StartedAt
+	if err := session.Record(Frame{CapturedAt: time.Now(), Data: []byte("first")}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Capture.FFmpegPath = filepath.Join(t.TempDir(), "missing-ffmpeg")
+	cfg.Storage.Directory = t.TempDir()
+	cfg.Storage.Organization = config.StorageOrganizationNone
+	exporter := NewExporter(buffer, func() config.Config { return cfg }, discardLogger())
+	defer exporter.Close()
+	time.Sleep(time.Millisecond)
+	nextMetadata := `{"caseId":"43"}`
+	first, err := session.SaveAndContinue(exporter, "first", &nextMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := session.Status()
+	if first.FrameCount != 1 || status.State != RecordingActive || status.Metadata != nextMetadata {
+		t.Fatalf("continued recording = status %#v, export %#v", status, first)
+	}
+	if !status.StartedAt.After(firstStartedAt) {
+		t.Fatalf("continued segment started at %v, want after %v", status.StartedAt, firstStartedAt)
+	}
+	if stats := buffer.Stats(); stats.Frames != 0 || stats.Bytes != 0 {
+		t.Fatalf("saved segment remains buffered: %#v", stats)
+	}
+
+	if err := session.Record(Frame{CapturedAt: time.Now(), Data: []byte("second")}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := session.SaveAndContinue(exporter, "second", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FrameCount != 1 || session.Status().State != RecordingActive || session.Status().Metadata != nextMetadata {
+		t.Fatalf("continued save without metadata = status %#v, export %#v", session.Status(), second)
+	}
+
+	if err := session.Record(Frame{CapturedAt: time.Now(), Data: []byte("third")}); err != nil {
+		t.Fatal(err)
+	}
+	emptyMetadata := ""
+	third, err := session.SaveAndContinue(exporter, "third", &emptyMetadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.FrameCount != 1 || session.Status().State != RecordingActive || session.Status().Metadata != "" {
+		t.Fatalf("continued save with empty metadata = status %#v, export %#v", session.Status(), third)
+	}
+
+	if err := session.Record(Frame{CapturedAt: time.Now(), Data: []byte("fourth")}); err != nil {
+		t.Fatal(err)
+	}
+	fourth, err := session.Save(exporter, "fourth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth.FrameCount != 1 || session.Status().State != RecordingPreviewing || session.Status().Metadata != "" {
+		t.Fatalf("final save = status %#v, export %#v", session.Status(), fourth)
 	}
 }
 
 func TestRecordingSessionTimeoutClearsMemoryAndTemporaryFile(t *testing.T) {
 	buffer := newTestCaptureBufferWithDuration(t, time.Nanosecond)
 	session := newTestRecordingSession(t, buffer, 40*time.Millisecond)
-	if err := session.Start(); err != nil {
+	if err := session.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	base := time.Now()
@@ -102,7 +175,7 @@ func TestRecordingSessionTimeoutClearsMemoryAndTemporaryFile(t *testing.T) {
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("timed-out temporary file still exists: %v", err)
 	}
-	if err := session.Start(); err != nil {
+	if err := session.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	if session.Status().State != RecordingActive {
@@ -113,7 +186,7 @@ func TestRecordingSessionTimeoutClearsMemoryAndTemporaryFile(t *testing.T) {
 func TestRecordingSessionSetMaxDurationReschedulesActiveTimeout(t *testing.T) {
 	buffer := newTestCaptureBuffer(t)
 	session := newTestRecordingSession(t, buffer, time.Minute)
-	if err := session.Start(); err != nil {
+	if err := session.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	if err := session.SetMaxDuration(30 * time.Millisecond); err != nil {

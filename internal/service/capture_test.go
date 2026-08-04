@@ -117,7 +117,7 @@ func TestMockCaptureProducesWatermarkedJPEG(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recording.Close()
-	if err := recording.Start(); err != nil {
+	if err := recording.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	capture := NewCaptureService(recording, NewFrameHub(), discardLogger())
@@ -171,13 +171,13 @@ func TestSegmentBoundariesDoNotRestartCaptureProcess(t *testing.T) {
 	capture.mu.RLock()
 	processDone := capture.done
 	capture.mu.RUnlock()
-	if err := recording.Start(); err != nil {
+	if err := recording.Start(""); err != nil {
 		t.Fatal(err)
 	}
 	if err := recording.Record(Frame{CapturedAt: time.Now(), Data: []byte("discarded")}); err != nil {
 		t.Fatal(err)
 	}
-	if err := recording.Start(); err != nil {
+	if err := recording.Start(""); err != nil {
 		t.Fatal(err)
 	}
 

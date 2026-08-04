@@ -75,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
 	mux.HandleFunc("POST /api/v1/capture/reset", s.resetCapture)
 	mux.HandleFunc("POST /api/v1/record/save", s.saveRecording)
+	mux.HandleFunc("POST /api/v1/record/save-and-continue", s.saveRecordingAndContinue)
 	mux.HandleFunc("GET /api/v1/record/jobs/{id}", s.getJob)
 	mux.HandleFunc("GET /ws/live", s.livePreview)
 	return s.middleware(mux)
@@ -294,8 +295,8 @@ func applicationState(capture service.CaptureStatus, recording service.Recording
 	return string(recording.State)
 }
 
-func (s *Server) resetCapture(w http.ResponseWriter, _ *http.Request) {
-	if err := s.recording.Start(); err != nil {
+func (s *Server) resetCapture(w http.ResponseWriter, r *http.Request) {
+	if err := s.recording.Start(r.URL.Query().Get("metadata")); err != nil {
 		writeError(w, http.StatusInternalServerError, "start new recording: "+err.Error())
 		return
 	}
@@ -303,7 +304,27 @@ func (s *Server) resetCapture(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) saveRecording(w http.ResponseWriter, r *http.Request) {
-	status, err := s.recording.Save(s.exporter, r.URL.Query().Get("fileName"))
+	s.saveRecordingWithMode(w, r, false)
+}
+
+func (s *Server) saveRecordingAndContinue(w http.ResponseWriter, r *http.Request) {
+	s.saveRecordingWithMode(w, r, true)
+}
+
+func (s *Server) saveRecordingWithMode(w http.ResponseWriter, r *http.Request, continueRecording bool) {
+	var status service.ExportStatus
+	var err error
+	if continueRecording {
+		query := r.URL.Query()
+		var nextMetadata *string
+		if query.Has("metadata") {
+			value := query.Get("metadata")
+			nextMetadata = &value
+		}
+		status, err = s.recording.SaveAndContinue(s.exporter, query.Get("fileName"), nextMetadata)
+	} else {
+		status, err = s.recording.Save(s.exporter, r.URL.Query().Get("fileName"))
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrRecordingNotActive):
@@ -318,7 +339,11 @@ func (s *Server) saveRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{"fileName": status.FileName, "jobId": status.ID, "state": status.State}
-	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: "video export task accepted; live preview continues", Data: data})
+	message := "video export task accepted; live preview continues"
+	if continueRecording {
+		message = "video export task accepted; recording continues"
+	}
+	writeJSON(w, http.StatusOK, response{Code: http.StatusOK, Message: message, Data: data})
 }
 
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {

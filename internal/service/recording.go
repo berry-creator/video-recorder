@@ -19,6 +19,7 @@ var ErrRecordingNotActive = errors.New("no recording is active")
 
 type RecordingStatus struct {
 	State              RecordingState  `json:"state"`
+	Metadata           string          `json:"metadata"`
 	StartedAt          time.Time       `json:"startedAt,omitempty"`
 	Deadline           time.Time       `json:"deadline,omitempty"`
 	TimedOutAt         time.Time       `json:"timedOutAt,omitempty"`
@@ -31,6 +32,7 @@ type RecordingSession struct {
 	mu          sync.Mutex
 	buffer      *CaptureBuffer
 	state       RecordingState
+	metadata    string
 	startedAt   time.Time
 	deadline    time.Time
 	timedOutAt  time.Time
@@ -55,7 +57,7 @@ func NewRecordingSession(buffer *CaptureBuffer, maxDuration time.Duration) (*Rec
 	return &RecordingSession{buffer: buffer, state: RecordingPreviewing, maxDuration: maxDuration}, nil
 }
 
-func (s *RecordingSession) Start() error {
+func (s *RecordingSession) Start(metadata string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -70,6 +72,7 @@ func (s *RecordingSession) Start() error {
 	s.stopTimerLocked()
 	now := time.Now()
 	s.state = RecordingActive
+	s.metadata = metadata
 	s.startedAt = now
 	s.deadline = now.Add(s.maxDuration)
 	s.timedOutAt = time.Time{}
@@ -106,6 +109,14 @@ func (s *RecordingSession) Record(frame Frame) error {
 }
 
 func (s *RecordingSession) Save(exporter *Exporter, name string) (ExportStatus, error) {
+	return s.save(exporter, name, false, nil)
+}
+
+func (s *RecordingSession) SaveAndContinue(exporter *Exporter, name string, nextMetadata *string) (ExportStatus, error) {
+	return s.save(exporter, name, true, nextMetadata)
+}
+
+func (s *RecordingSession) save(exporter *Exporter, name string, continueRecording bool, nextMetadata *string) (ExportStatus, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -123,7 +134,23 @@ func (s *RecordingSession) Save(exporter *Exporter, name string) (ExportStatus, 
 		return ExportStatus{}, err
 	}
 	s.stopTimerLocked()
+	if continueRecording {
+		if s.transcoder != nil {
+			s.transcoder.Start()
+		}
+		if nextMetadata != nil {
+			s.metadata = *nextMetadata
+		}
+		now := time.Now()
+		s.startedAt = now
+		s.deadline = now.Add(s.maxDuration)
+		s.timedOutAt = time.Time{}
+		s.lastError = ""
+		s.scheduleTimeoutLocked()
+		return status, nil
+	}
 	s.state = RecordingPreviewing
+	s.metadata = ""
 	s.startedAt = time.Time{}
 	s.deadline = time.Time{}
 	s.timedOutAt = time.Time{}
@@ -158,6 +185,7 @@ func (s *RecordingSession) Status() RecordingStatus {
 	defer s.mu.Unlock()
 	status := RecordingStatus{
 		State:              s.state,
+		Metadata:           s.metadata,
 		StartedAt:          s.startedAt,
 		Deadline:           s.deadline,
 		TimedOutAt:         s.timedOutAt,
